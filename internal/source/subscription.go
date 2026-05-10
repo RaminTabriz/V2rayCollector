@@ -11,16 +11,18 @@ import (
     "sync"
     "time"
 
-    "github.com/ramin00542/GO_V2rayCollector/internal/fetcher"
-    "github.com/ramin00542/GO_V2rayCollector/internal/parser"
+    "github.com/RaminTabriz/V2rayCollector/internal/fetcher"
+    "github.com/RaminTabriz/V2rayCollector/internal/parser"
     "github.com/projectdiscovery/gologger"
 )
 
+// Subscription مدیریت دریافت از ساب‌لینک‌ها
 type Subscription struct {
     urls        []string
     concurrency int
 }
 
+// NewSubscription سازنده جدید از فایل JSON
 func NewSubscription(jsonPath string, concurrency int) *Subscription {
     urls := readSourcesFromJSON(jsonPath)
     return &Subscription{
@@ -29,6 +31,7 @@ func NewSubscription(jsonPath string, concurrency int) *Subscription {
     }
 }
 
+// readSourcesFromJSON خواندن لیست ساب‌لینک‌ها از فایل JSON
 func readSourcesFromJSON(path string) []string {
     data, err := os.ReadFile(path)
     if err != nil {
@@ -43,12 +46,14 @@ func readSourcesFromJSON(path string) []string {
     return sources
 }
 
+// FetchAll دریافت تمام ساب‌لینک‌ها به صورت همزمان
 func (s *Subscription) FetchAll(ctx context.Context, onConfig func(cfg string)) {
     if len(s.urls) == 0 {
         gologger.Warning().Msg("No subscription sources to fetch")
         return
     }
     gologger.Info().Msgf("Fetching %d subscription sources", len(s.urls))
+
     jobs := make(chan string, len(s.urls))
     var wg sync.WaitGroup
     for i := 0; i < s.concurrency; i++ {
@@ -67,6 +72,7 @@ func (s *Subscription) FetchAll(ctx context.Context, onConfig func(cfg string)) 
     wg.Wait()
 }
 
+// worker کارگر برای دریافت یک ساب‌لینک
 func (s *Subscription) worker(ctx context.Context, jobs <-chan string, wg *sync.WaitGroup, onConfig func(string)) {
     defer wg.Done()
     for url := range jobs {
@@ -75,38 +81,59 @@ func (s *Subscription) worker(ctx context.Context, jobs <-chan string, wg *sync.
             return
         default:
         }
-        resp, err := fetcher.Client.Get(url)
-        if err != nil {
-            gologger.Debug().Msgf("Failed to fetch subscription %s: %v", url, err)
-            continue
+        s.fetchOne(ctx, url, onConfig)
+        time.Sleep(1 * time.Second) // احترام به منابع
+    }
+}
+
+// fetchOne دریافت و پردازش یک ساب‌لینک
+func (s *Subscription) fetchOne(ctx context.Context, url string, onConfig func(string)) {
+    req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+    if err != nil {
+        gologger.Debug().Msgf("Failed to create request for %s: %v", url, err)
+        return
+    }
+    req.Header.Set("Accept-Encoding", "gzip")
+
+    resp, err := fetcher.Client.Do(req)
+    if err != nil {
+        gologger.Debug().Msgf("Failed to fetch subscription %s: %v", url, err)
+        return
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != 200 {
+        gologger.Debug().Msgf("Subscription %s returned HTTP %d", url, resp.StatusCode)
+        return
+    }
+
+    var reader io.Reader = resp.Body
+    if resp.Header.Get("Content-Encoding") == "gzip" {
+        gr, err := gzip.NewReader(resp.Body)
+        if err == nil {
+            defer gr.Close()
+            reader = gr
         }
-        if resp.StatusCode != 200 {
-            resp.Body.Close()
-            continue
-        }
-        var reader io.Reader = resp.Body
-        if resp.Header.Get("Content-Encoding") == "gzip" {
-            gr, err := gzip.NewReader(resp.Body)
-            if err == nil {
-                reader = gr
-                defer gr.Close()
-            }
-        }
-        body, err := io.ReadAll(reader)
-        resp.Body.Close()
-        if err != nil {
-            continue
-        }
-        content := string(body)
-        // Try base64 decode if needed
-        if decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(content)); err == nil && len(decoded) > 0 {
-            content = string(decoded)
-        }
-        configs := parser.ExtractAllConfigs(content)
-        gologger.Debug().Msgf("Extracted %d configs from %s", len(configs), url)
-        for _, cfg := range configs {
-            onConfig(cfg)
-        }
-        time.Sleep(1 * time.Second)
+    }
+
+    body, err := io.ReadAll(reader)
+    if err != nil {
+        gologger.Debug().Msgf("Failed to read body of %s: %v", url, err)
+        return
+    }
+
+    content := string(body)
+
+    // تلاش برای دیکد base64 (برخی ساب‌لینک‌ها base64 هستند)
+    trimmed := strings.TrimSpace(content)
+    if decoded, err := base64.StdEncoding.DecodeString(trimmed); err == nil && len(decoded) > 0 {
+        content = string(decoded)
+    }
+
+    configs := parser.ExtractAllConfigs(content)
+    gologger.Debug().Msgf("Extracted %d configs from %s", len(configs), url)
+
+    for _, cfg := range configs {
+        onConfig(cfg)
     }
 }
