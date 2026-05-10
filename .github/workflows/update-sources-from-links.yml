@@ -34,27 +34,53 @@ jobs:
             echo "⚠️ No valid_subscription_links.txt found or empty. Skipping update."
           fi
 
-      - name: Merge valid links into Sources.json (pure bash)
+      - name: Merge valid links into Sources.json (using jq)
         id: merge
         if: steps.check_valid.outputs.has_valid == 'true'
         run: |
-          cat Sources.json | tr -d '[],"' | tr ',' '\n' | sed '/^[[:space:]]*$/d' > current_sources.txt
-          cat valid_subscription_links.txt >> current_sources.txt
-          sort -u current_sources.txt > merged_sources.txt
+          # Install jq (usually pre-installed, but ensure)
+          sudo apt-get update && sudo apt-get install -y jq
           
-          ORIGINAL_COUNT=$(cat Sources.json | tr -d '[],"' | tr ',' '\n' | sed '/^[[:space:]]*$/d' | sort -u | wc -l)
+          # Extract existing links (trimming whitespace automatically)
+          jq -r '.[]' Sources.json | sort -u > current_sources.txt
+          
+          # Trim whitespace from valid links and sort
+          sed 's/^[[:space:]]*//;s/[[:space:]]*$//' valid_subscription_links.txt | sort -u > valid_sorted.txt
+          
+          # Merge and get unique
+          cat current_sources.txt valid_sorted.txt | sort -u > merged_sources.txt
+          
+          ORIGINAL_COUNT=$(cat current_sources.txt | wc -l)
           FINAL_COUNT=$(cat merged_sources.txt | wc -l)
           ADDED=$((FINAL_COUNT - ORIGINAL_COUNT))
           echo "ADDED_COUNT=$ADDED" >> $GITHUB_ENV
           
+          if [ $ADDED -eq 0 ]; then
+            echo "⚠️ No new links to add."
+          else
+            echo "✅ Adding $ADDED new links"
+          fi
+          
+          # Build new Sources.json with proper indentation (2 spaces)
           echo "[" > Sources.json.new
           while IFS= read -r line; do
-            echo "  \"$line\"," >> Sources.json.new
+            # Escape double quotes and backslashes for JSON
+            escaped_line=$(printf "%s" "$line" | sed 's/["\\]/\\&/g')
+            echo "  \"$escaped_line\"," >> Sources.json.new
           done < merged_sources.txt
+          # Remove trailing comma from last line
           sed -i '$ s/,$//' Sources.json.new
           echo "]" >> Sources.json.new
-          mv Sources.json.new Sources.json
-          echo "✅ Added $ADDED new links to Sources.json"
+          
+          # Validate JSON before replacing
+          if jq empty Sources.json.new 2>/dev/null; then
+            mv Sources.json.new Sources.json
+            echo "✅ Sources.json updated successfully."
+          else
+            echo "❌ Invalid JSON generated. Aborting."
+            cat Sources.json.new
+            exit 1
+          fi
 
       - name: Generate detailed report
         run: |
@@ -62,7 +88,6 @@ jobs:
           FOUND=$(cat subscription_links_found.txt 2>/dev/null | wc -l | tr -d ' ')
           VALID=$(cat valid_subscription_links.txt 2>/dev/null | wc -l | tr -d ' ')
           ADDED=${ADDED_COUNT:-0}
-          RAW=${RAW:-0}; FOUND=${FOUND:-0}; VALID=${VALID:-0}
           DATE=$(date '+%Y-%m-%d %H:%M:%S')
           
           {
@@ -74,10 +99,10 @@ jobs:
             echo ""
             echo "| مرحله | تعداد |"
             echo "|-------|-------|"
-            echo "| لینک‌های خام اولیه (subscription_links_raw.txt) | $RAW |"
-            echo "| لینک‌های یافت شده توسط جستجو (subscription_links_found.txt) | $FOUND |"
-            echo "| لینک‌های معتبر دارای کانفیگ (valid_subscription_links.txt) | $VALID |"
-            echo "| **لینک‌های جدید اضافه شده به Sources.json** | **$ADDED** |"
+            echo "| لینک‌های خام اولیه | ${RAW:-0} |"
+            echo "| لینک‌های یافت شده | ${FOUND:-0} |"
+            echo "| لینک‌های معتبر | ${VALID:-0} |"
+            echo "| **لینک‌های جدید اضافه شده** | **$ADDED** |"
             echo ""
             echo "## 🔗 نمونه لینک‌های معتبر (حداکثر ۱۰ مورد)"
             echo ""
@@ -97,5 +122,10 @@ jobs:
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
           git add Sources.json reports/subscription_update_report.md
-          git diff --staged --quiet || git commit -m "📡 Update Sources.json with new valid subscription links ($(date '+%Y-%m-%d %H:%M:%S'))"
-          git push
+          if git diff --staged --quiet; then
+            echo "📭 No changes to commit."
+          else
+            git commit -m "📡 Update Sources.json with new valid subscription links ($(date '+%Y-%m-%d %H:%M:%S'))"
+            git push
+            echo "✅ Changes committed and pushed."
+          fi
