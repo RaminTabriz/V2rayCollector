@@ -2,7 +2,7 @@ name: Find & Validate Subscription Links on GitHub
 
 on:
   schedule:
-    - cron: "0 */6 * * *"   # هر 6 ساعت
+    - cron: "0 */6 * * *"   # each 6 hours
   workflow_dispatch:
 
 permissions:
@@ -22,97 +22,70 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            
-            // الگوهای جستجو (extension و محتوا)
             const queries = [
-              'subscription extension:txt',
-              'v2ray extension:txt',
-              'vmess extension:txt',
-              'vless extension:txt',
-              'trojan extension:txt',
-              'shadowsocks extension:txt',
-              'base64 extension:txt',
-              'subscription extension:json',
-              'config extension:yaml',
-              'sub extension:txt',
-              'iran extension:txt',
-              'mixed extension:txt'
+              'subscription extension:txt', 'v2ray extension:txt', 'vmess extension:txt',
+              'vless extension:txt', 'trojan extension:txt', 'shadowsocks extension:txt',
+              'base64 extension:txt', 'subscription extension:json', 'config extension:yaml',
+              'sub extension:txt', 'iran extension:txt', 'mixed extension:txt'
             ];
-            
             let allUrls = new Set();
-            
             for (const q of queries) {
               let page = 1;
               let hasNext = true;
-              while (hasNext && page <= 5) { // حداکثر 5 صفحه (500 نتیجه)
+              while (hasNext && page <= 5) {
                 try {
                   const result = await github.rest.search.code({
                     q: `${q} sort:updated-desc`,
                     per_page: 100,
                     page: page
                   });
-                  
                   for (const item of result.data.items) {
                     const rawUrl = `https://raw.githubusercontent.com/${item.repository.full_name}/${item.repository.default_branch}/${item.path}`;
                     allUrls.add(rawUrl);
                   }
-                  
                   hasNext = result.data.items.length === 100;
                   page++;
                   await new Promise(r => setTimeout(r, 500));
                 } catch (err) {
-                  console.log(`Error with query ${q} page ${page}: ${err.message}`);
+                  console.log(`Error query ${q} page ${page}: ${err.message}`);
                   break;
                 }
               }
             }
-            
             const urlList = Array.from(allUrls);
             console.log(`Found ${urlList.length} unique raw URLs`);
-            
-            // ذخیره همه لینک‌های خام (بدون اعتبارسنجی)
             fs.writeFileSync('subscription_links_raw.txt', urlList.join('\n'));
             return urlList.length;
 
       - name: Validate each link (status + config presence)
         run: |
-          # حذف فایل قبلی در صورت وجود
           rm -f valid_subscription_links.txt
           touch valid_subscription_links.txt
-          
-          # تابع بررسی یک لینک
+          # Define the check_link function
           check_link() {
             local url="$1"
-            # بررسی HTTP status با HEAD (سریع)
             local status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$url" 2>/dev/null)
-            if [ "$status" != "200" ]; then
+            if [[ "$status" != "200" ]]; then
               echo "❌ $url -> status $status"
-              return 1
+              return 0          # Always return 0 so xargs does not stop
             fi
-            
-            # دانلود 1KB اول محتوا برای بررسی کانفیگ
             local content=$(curl -s --max-time 10 --range 0-1024 "$url" 2>/dev/null)
-            if [ -z "$content" ]; then
-              echo "⚠️ $url -> empty content"
-              return 1
+            if [[ -z "$content" ]]; then
+              echo "⚠️  $url -> empty content"
+              return 0
             fi
-            
-            # الگوهای تشخیص کانفیگ (همان الگوهای اصلی پروژه)
             if echo "$content" | grep -qE '(vmess://|vless://|trojan://|ss://|ssr://|hysteria2://|hy2://|tuic://|wireguard://|tg://proxy|tg://socks|slipnet://|socks5?://|-----BEGIN ARGO VPN BRIDGE BLOCK-----)'; then
               echo "✅ $url -> valid"
               echo "$url" >> valid_subscription_links.txt
             else
-              echo "⚠️ $url -> no config pattern found"
+              echo "⚠️  $url -> no config pattern found"
             fi
+            return 0
           }
-          
           export -f check_link
-          
-          # موازی‌سازی (حداکثر ۵ همزمان) برای سرعت بخشیدن
-          cat subscription_links_raw.txt | xargs -I {} -P 5 bash -c 'check_link "$@"' _ {}
-          
-          VALID_COUNT=$(wc -l < valid_subscription_links.txt)
-          echo "✅ Valid links found: $VALID_COUNT"
+          # Process up to 5 links concurrently, ignoring any non-zero exits
+          cat subscription_links_raw.txt | xargs -I {} -P 5 bash -c 'check_link "$@" || true' _ {}
+          echo "Valid links count: $(wc -l < valid_subscription_links.txt)"
 
       - name: Add to job summary
         run: |
