@@ -1,4 +1,4 @@
-name: Simple Sources Updater
+name: Sources Updater with Basic Scan
 
 on:
   workflow_run:
@@ -21,30 +21,52 @@ jobs:
       
       - name: Merge valid links
         run: |
-          # اگر فایل معتبر وجود نداشت، خارج شو
           if [ ! -s valid_subscription_links.txt ]; then
-            echo "No valid links file, exiting"
+            echo "No valid links, skipping merge"
             exit 0
           fi
-          
-          # ساخت لیست یکتا از لینک‌های فعلی + جدید
           jq -r '.[]' Sources.json | sort -u > current.txt
-          cat valid_subscription_links.txt | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sort -u > new.txt
+          cat valid_subscription_links.txt | sort -u > new.txt
           cat current.txt new.txt | sort -u > merged.txt
+          jq -R . merged.txt | jq -s . > Sources.json
+      
+      - name: Basic scan for new .txt files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          jq -r '.[]' Sources.json > all_links.txt
+          > new_from_scan.txt
           
-          # ساخت JSON جدید
-          jq -R . merged.txt | jq -s . > Sources.json.tmp
-          mv Sources.json.tmp Sources.json
+          while IFS= read -r url; do
+            # استخراج owner/repo
+            owner_repo=$(echo "$url" | sed -n 's|https://raw.githubusercontent.com/\([^/]*/[^/]*\)/.*|\1|p')
+            [ -z "$owner_repo" ] && continue
+            
+            # فقط پوشه اصلی (main) را چک کن
+            api_url="https://api.github.com/repos/$owner_repo/contents/"
+            resp=$(curl -s -H "Authorization: token $GH_TOKEN" "$api_url")
+            
+            # پیدا کردن فایل‌های .txt
+            echo "$resp" | jq -r '.[] | select(.type=="file") | select(.name | endswith(".txt")) | .download_url' 2>/dev/null | while read -r file_url; do
+              if ! grep -Fxq "$file_url" all_links.txt; then
+                echo "$file_url" >> new_from_scan.txt
+                echo "Found new: $file_url"
+              fi
+            done
+            sleep 0.5
+          done < all_links.txt
           
-          # گزارش تعداد
-          ADDED=$(comm -13 current.txt new.txt | wc -l)
-          echo "Added $ADDED new links"
-          echo "ADDED=$ADDED" >> $GITHUB_ENV
+          # اضافه کردن لینک‌های جدید
+          if [ -s new_from_scan.txt ]; then
+            cat all_links.txt new_from_scan.txt | sort -u > all_links_new.txt
+            jq -R . all_links_new.txt | jq -s . > Sources.json
+            echo "Added $(wc -l < new_from_scan.txt) new links from scan"
+          fi
       
       - name: Commit
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          git add Sources.json
-          git diff --staged --quiet || git commit -m "Update Sources.json"
+          git add Sources.json new_from_scan.txt
+          git diff --staged --quiet || git commit -m "Update Sources.json with scan"
           git push
