@@ -31,48 +31,46 @@ jobs:
             echo "has_valid=true" >> $GITHUB_OUTPUT
           else
             echo "has_valid=false" >> $GITHUB_OUTPUT
-            echo "⚠️ No valid_subscription_links.txt found or empty. Skipping update."
+            echo "⚠️ valid_subscription_links.txt not found or empty."
           fi
 
-      - name: Merge valid links into Sources.json (using jq)
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Merge valid links into Sources.json (robust)
         id: merge
         if: steps.check_valid.outputs.has_valid == 'true'
         run: |
-          # Install jq (usually pre-installed, but ensure)
-          sudo apt-get update && sudo apt-get install -y jq
+          # پاکسازی و یکتاسازی لینک‌های موجود در Sources.json
+          jq -r '.[]' Sources.json | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sort -u > current_sources.txt
           
-          # Extract existing links (trimming whitespace automatically)
-          jq -r '.[]' Sources.json | sort -u > current_sources.txt
-          
-          # Trim whitespace from valid links and sort
+          # پاکسازی لینک‌های معتبر
           sed 's/^[[:space:]]*//;s/[[:space:]]*$//' valid_subscription_links.txt | sort -u > valid_sorted.txt
           
-          # Merge and get unique
+          # ادغام و یکتاسازی
           cat current_sources.txt valid_sorted.txt | sort -u > merged_sources.txt
           
-          ORIGINAL_COUNT=$(cat current_sources.txt | wc -l)
+          ORIG_COUNT=$(cat current_sources.txt | wc -l)
           FINAL_COUNT=$(cat merged_sources.txt | wc -l)
-          ADDED=$((FINAL_COUNT - ORIGINAL_COUNT))
+          ADDED=$((FINAL_COUNT - ORIG_COUNT))
           echo "ADDED_COUNT=$ADDED" >> $GITHUB_ENV
           
           if [ $ADDED -eq 0 ]; then
-            echo "⚠️ No new links to add."
+            echo "⚠️ No new links to add. Sources.json unchanged."
           else
-            echo "✅ Adding $ADDED new links"
+            echo "✅ Adding $ADDED new links."
           fi
           
-          # Build new Sources.json with proper indentation (2 spaces)
+          # ساخت فایل جدید Sources.json با indent 2 فاصله
           echo "[" > Sources.json.new
           while IFS= read -r line; do
-            # Escape double quotes and backslashes for JSON
             escaped_line=$(printf "%s" "$line" | sed 's/["\\]/\\&/g')
             echo "  \"$escaped_line\"," >> Sources.json.new
           done < merged_sources.txt
-          # Remove trailing comma from last line
           sed -i '$ s/,$//' Sources.json.new
           echo "]" >> Sources.json.new
           
-          # Validate JSON before replacing
+          # اعتبارسنجی JSON
           if jq empty Sources.json.new 2>/dev/null; then
             mv Sources.json.new Sources.json
             echo "✅ Sources.json updated successfully."
@@ -85,7 +83,6 @@ jobs:
       - name: Generate detailed report
         run: |
           RAW=$(cat subscription_links_raw.txt 2>/dev/null | wc -l | tr -d ' ')
-          FOUND=$(cat subscription_links_found.txt 2>/dev/null | wc -l | tr -d ' ')
           VALID=$(cat valid_subscription_links.txt 2>/dev/null | wc -l | tr -d ' ')
           ADDED=${ADDED_COUNT:-0}
           DATE=$(date '+%Y-%m-%d %H:%M:%S')
@@ -100,9 +97,8 @@ jobs:
             echo "| مرحله | تعداد |"
             echo "|-------|-------|"
             echo "| لینک‌های خام اولیه | ${RAW:-0} |"
-            echo "| لینک‌های یافت شده | ${FOUND:-0} |"
             echo "| لینک‌های معتبر | ${VALID:-0} |"
-            echo "| **لینک‌های جدید اضافه شده** | **$ADDED** |"
+            echo "| **لینک‌های جدید اضافه شده به Sources.json** | **$ADDED** |"
             echo ""
             echo "## 🔗 نمونه لینک‌های معتبر (حداکثر ۱۰ مورد)"
             echo ""
@@ -117,7 +113,6 @@ jobs:
           cat reports/subscription_update_report.md >> $GITHUB_STEP_SUMMARY
 
       - name: Commit and push changes
-        if: steps.check_valid.outputs.has_valid == 'true'
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
