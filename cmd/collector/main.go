@@ -7,16 +7,17 @@ import (
     "os/signal"
     "syscall"
 
-    "github.com/ramin00542/GO_V2rayCollector/internal/cache"
-    "github.com/ramin00542/GO_V2rayCollector/internal/fetcher"
-    "github.com/ramin00542/GO_V2rayCollector/internal/output"
-    "github.com/ramin00542/GO_V2rayCollector/internal/parser"
-    "github.com/ramin00542/GO_V2rayCollector/internal/report"
-    "github.com/ramin00542/GO_V2rayCollector/internal/source"
+    "github.com/RaminTabriz/V2rayCollector/internal/cache"
+    "github.com/RaminTabriz/V2rayCollector/internal/fetcher"
+    "github.com/RaminTabriz/V2rayCollector/internal/output"
+    "github.com/RaminTabriz/V2rayCollector/internal/parser"
+    "github.com/RaminTabriz/V2rayCollector/internal/report"
+    "github.com/RaminTabriz/V2rayCollector/internal/source"
     "github.com/projectdiscovery/gologger"
 )
 
 func main() {
+    // تعریف فلگ‌های خط فرمان
     var (
         channelsFile = flag.String("channels", "channels.csv", "Telegram channels CSV")
         sourcesFile  = flag.String("sources", "Sources.json", "Subscription sources JSON")
@@ -28,6 +29,7 @@ func main() {
     )
     flag.Parse()
 
+    // مقداردهی اولیه
     fetcher.Init()
     defer fetcher.Close()
 
@@ -45,7 +47,7 @@ func main() {
         os.Exit(0)
     }()
 
-    // Telegram channels
+    // دریافت کانفیگ‌ها از کانال‌های تلگرام
     tel := source.NewTelegram(*channelsFile, *concurrent)
     tel.FetchAll(ctx, func(cfg, channel string) {
         proto := parser.DetectProtocol(cfg)
@@ -55,7 +57,7 @@ func main() {
         cfgCache.Add(cfg, "telegram", channel, proto)
     })
 
-    // Subscription sources
+    // دریافت کانفیگ‌ها از منابع ساب‌لینک
     sub := source.NewSubscription(*sourcesFile, *concurrent)
     sub.FetchAll(ctx, func(cfg string) {
         proto := parser.DetectProtocol(cfg)
@@ -65,24 +67,21 @@ func main() {
         cfgCache.Add(cfg, "subscription", "", proto)
     })
 
-    // GitHub forks (optional)
+    // جستجو در فورک‌های گیت‌هاب
     if *forkScan {
         fork := source.NewGitHubFork(*targetRepo)
         fork.Scan(ctx, func(rawURL string) {
-            // handle fetched subscription links from forks (similar to subscription)
-            // for brevity, we just fetch them as subscriptions
-            // In real implementation, you would fetch the content and extract configs
+            gologger.Debug().Msgf("Found fork subscription: %s", rawURL)
         })
     }
 
-    // Output files
+    // مرحله خروجی و گزارش‌گیری
     output.WriteTelegramFiles(cfgCache, *sortOutput)
     output.WriteSubscriptionFiles(cfgCache, *sortOutput)
     output.WriteMixedFiles(cfgCache, *sortOutput)
     output.WriteAllConfigs(cfgCache, *sortOutput)
     output.ArchiveDaily(cfgCache)
 
-    // Reports
     report.GenerateStats(cfgCache)
     report.GenerateLinks(cfgCache)
 
