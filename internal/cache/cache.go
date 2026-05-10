@@ -56,8 +56,8 @@ func (c *Cache) Add(config, source, channel, protocol string) bool {
     c.mu.Lock()
     defer c.mu.Unlock()
     if existingKey, ok := c.fpMap[fp]; ok {
-        // duplicate
-        return false
+        _ = existingKey
+        return false // duplicate
     }
     c.items[config] = Entry{
         Timestamp:   time.Now().Unix(),
