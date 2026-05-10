@@ -42,9 +42,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: نصب ابزارهای مورد نیاز
+      - name: نصب jq با استفاده از action رسمی
+        uses: actions/setup-jq@v1
+        with:
+          jq-version: '1.7'
+
+      - name: آماده‌سازی دایرکتوری‌ها و فایل‌های اولیه
         run: |
-          sudo apt-get update && sudo apt-get install -y jq
           mkdir -p reports
           if [ ! -f Sources.json ]; then echo "[]" > Sources.json; fi
           if [ ! -f channels.csv ]; then echo "# Telegram Channels" > channels.csv; fi
@@ -87,9 +91,10 @@ EOF
         id: cache-scanned
         with:
           path: scanned_repos.txt
-          key: scanned-repos-${{ github.repository_id }}-${{ github.run_id }}
+          # کلید ثابت بدون run_id برای حفظ کش بین اجراهای مختلف
+          key: scanned-repos-${{ github.repository_id }}
           restore-keys: |
-            scanned-repos-${{ github.repository_id }}-
+            scanned-repos-${{ github.repository_id }}
 
       - name: آماده‌سازی لیست مخازن اسکن شده
         run: |
@@ -116,12 +121,10 @@ EOF
           jq -r '.[]' Sources.json > all_current_links.txt
           
           while IFS= read -r url; do
-            # حذف فاصله
             url="${url#"${url%%[![:space:]]*}"}"
             url="${url%"${url##*[![:space:]]}"}"
             [ -z "$url" ] && continue
             
-            # استخراج owner/repo
             REPO_INFO=$(echo "$url" | sed -n 's|https://raw\.githubusercontent\.com/\([^/]*\)/\([^/]*\)/.*|\1 \2|p')
             [ -z "$REPO_INFO" ] && continue
             
@@ -129,9 +132,7 @@ EOF
             REPO=$(echo "$REPO_INFO" | cut -d' ' -f2)
             REPO_FULL="$OWNER/$REPO"
             
-            # رد کردن مخازن blacklist
             if [ -n "$EXCLUDE_REPOS" ] && echo "$REPO_FULL" | grep -qE "$EXCLUDE_REPOS"; then continue; fi
-            # بررسی کش
             if grep -Fxq "$REPO_FULL" scanned_repos.txt; then continue; fi
             
             echo "📁 در حال اسکن: $REPO_FULL"
@@ -146,15 +147,11 @@ EOF
               fi
               if echo "$response" | jq -e '.message == "Not Found"' > /dev/null 2>&1; then continue; fi
               
-              # استخراج لینک فایل‌های txt
               echo "$response" | jq -r '.[] | select(.type=="file") | select(.name | endswith(".txt")) | .download_url' 2>/dev/null > /tmp/files.txt
               if [ ! -s /tmp/files.txt ]; then continue; fi
               
-              # حلقه روی فایل‌ها (بدون subshell)
               while IFS= read -r file_url; do
-                # رد کردن الگوهای ناخواسته
                 if [ -n "$EXCLUDE_PATTERNS" ] && echo "$file_url" | grep -qiE "$EXCLUDE_PATTERNS"; then continue; fi
-                # بررسی محتوا
                 if curl -sL --max-time 10 "$file_url" | head -c 2000 | grep -qE '(vmess|vless|trojan|ss://|ssr://)'; then
                   if ! grep -Fxq "$file_url" all_current_links.txt; then
                     echo "$file_url" >> "$NEW_LINKS_FROM_SCAN"
@@ -189,13 +186,11 @@ EOF
           fi
           echo "کلمات جستجو: $SEARCH_KEYWORDS"
           
-          # فایل موقت برای مخازن جدید کشف شده
           DISCOVERED_REPOS="discovered_repos.txt"
           NEW_SUBS_DISCOVERED="new_subs_from_discovery.txt"
           > "$DISCOVERED_REPOS"
           > "$NEW_SUBS_DISCOVERED"
           
-          # جستجو در GitHub (حداکثر ۳ صفحه، هر صفحه ۳۰ نتیجه)
           for page in 1 2 3; do
             QUERY=$(echo "$SEARCH_KEYWORDS" | sed 's/ /+/g')
             SEARCH_URL="https://api.github.com/search/repositories?q=$QUERY+extension:txt&sort=updated&order=desc&per_page=30&page=$page"
@@ -206,7 +201,6 @@ EOF
               break
             fi
             
-            # استخراج full_name مخازن
             echo "$RESP" | jq -r '.items[].full_name' 2>/dev/null >> "$DISCOVERED_REPOS"
             sleep 0.5
           done
@@ -214,7 +208,6 @@ EOF
           sort -u -o "$DISCOVERED_REPOS" "$DISCOVERED_REPOS"
           echo "🔍 تعداد مخازن جدید کشف شده: $(wc -l < "$DISCOVERED_REPOS")"
           
-          # حذف مخازنی که قبلاً اسکن شده‌اند
           comm -23 "$DISCOVERED_REPOS" scanned_repos.txt > new_repos_to_scan.txt
           NEW_REPOS_COUNT=$(wc -l < new_repos_to_scan.txt)
           echo "🆕 مخازنی که قبلاً اسکن نشده‌اند: $NEW_REPOS_COUNT"
@@ -224,12 +217,12 @@ EOF
             exit 0
           fi
           
-          # اسکن مخازن جدید برای یافتن فایل‌های .txt معتبر
           INCLUDE_PATHS=$(jq -r '.include_paths[]' filters.json 2>/dev/null)
           EXCLUDE_PATTERNS=$(jq -r '.exclude_patterns[]' filters.json 2>/dev/null | tr '\n' '|')
           
-          # خواندن لینک‌های فعلی
-          jq -r '.[]' Sources.json > all_current_links_discovery.txt
+          # خواندن لینک‌های فعلی (که شامل لینک‌های مرحله 3 نیز می‌شود)
+          # در این مرحله all_current_links.txt از مرحله قبل وجود دارد و شامل لینک‌های قبلی+جدید اسکن شده است
+          cp all_current_links.txt all_current_links_backup.txt
           
           while IFS= read -r repo_full; do
             [ -z "$repo_full" ] && continue
@@ -248,7 +241,7 @@ EOF
               while IFS= read -r file_url; do
                 if [ -n "$EXCLUDE_PATTERNS" ] && echo "$file_url" | grep -qiE "$EXCLUDE_PATTERNS"; then continue; fi
                 if curl -sL --max-time 10 "$file_url" | head -c 2000 | grep -qE '(vmess|vless|trojan|ss://|ssr://)'; then
-                  if ! grep -Fxq "$file_url" all_current_links_discovery.txt; then
+                  if ! grep -Fxq "$file_url" all_current_links_backup.txt; then
                     echo "$file_url" >> "$NEW_SUBS_DISCOVERED"
                     echo "  ✅ ساب جدید از مخزن جدید: $file_url"
                   fi
@@ -259,19 +252,16 @@ EOF
             sleep 0.2
           done < new_repos_to_scan.txt
           
-          # اضافه کردن ساب‌لینک‌های جدید کشف شده به مجموعه
+          # اضافه کردن لینک‌های جدید کشف شده به all_current_links.txt
           if [ -s "$NEW_SUBS_DISCOVERED" ]; then
-            cat "$NEW_SUBS_DISCOVERED" >> all_current_links_discovery.txt
-            sort -u all_current_links_discovery.txt -o all_current_links_discovery.txt
+            # ادغام لینک‌های موجود (که شامل لینک‌های مرحله 3 و قدیمی هستند) با لینک‌های جدید
+            sort -u all_current_links.txt "$NEW_SUBS_DISCOVERED" -o all_current_links.txt
             DISCOVERED_COUNT=$(wc -l < "$NEW_SUBS_DISCOVERED")
             echo "DISCOVERED_LINKS_COUNT=$DISCOVERED_COUNT" >> $GITHUB_ENV
             echo "✅ $DISCOVERED_COUNT ساب لینک جدید از مخازن کشف شده اضافه شد."
           else
             echo "هیچ ساب لینک معتبری در مخازن جدید یافت نشد."
           fi
-          
-          # به‌روزرسانی all_current_links.txt برای مراحل بعد
-          cp all_current_links_discovery.txt all_current_links.txt 2>/dev/null || true
 
       # ========================= مرحله 5: بازسازی نهایی Sources.json =========================
       - name: بازسازی نهایی Sources.json
@@ -303,13 +293,11 @@ EOF
           }
           
           while IFS= read -r sub_url; do
-            # از خود URL
             if echo "$sub_url" | grep -qE '(t\.me/|telegram\.me/|@[a-zA-Z0-9_]+)'; then
               channel=$(echo "$sub_url" | grep -oE '(t\.me/[a-zA-Z0-9_]+|telegram\.me/[a-zA-Z0-9_]+|@[a-zA-Z0-9_]+)' | head -1)
               norm=$(normalize_telegram "$channel")
               [ -n "$norm" ] && echo "$norm" >> telegram_channels_temp.txt
             fi
-            # از محتوای فایل
             curl -sL --max-time 10 "$sub_url" | head -c 5000 | grep -oE '(https?://(t\.me/|telegram\.me/)[a-zA-Z0-9_]+|@[a-zA-Z0-9_]+)' | while read -r match; do
               norm=$(normalize_telegram "$match")
               [ -n "$norm" ] && echo "$norm" >> telegram_channels_temp.txt
@@ -360,12 +348,14 @@ EOF
           name: update-reports
           path: reports/
 
-      # ========================= مرحله 8: Commit و Push =========================
+      # ========================= مرحله 8: Commit و Push (بدون فایل‌های موقت) =========================
       - name: Commit و Push تغییرات
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions Bot"
-          git add Sources.json scanned_repos.txt new_from_scan.txt new_subs_from_discovery.txt channels.csv reports/ 2>/dev/null || true
+          # فقط فایل‌های ضروری را اضافه کنید (Sources.json, scanned_repos.txt, channels.csv, reports)
+          git add Sources.json scanned_repos.txt channels.csv reports/
+          # در صورت وجود تغییرات در فایل‌های دیگر مانند filters.json (اگر کاربر تغییر داده) می‌توان اضافه کرد اما بهتر است جداگانه
           if git diff --staged --quiet; then
             echo "هیچ تغییری برای commit وجود ندارد."
           else
