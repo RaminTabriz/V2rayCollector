@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.2
 
       - name: آماده‌سازی دایرکتوری‌ها و فایل‌های اولیه
         run: |
@@ -69,6 +69,7 @@ jobs:
         if: steps.check_valid.outputs.has_valid == 'true'
         run: |
           jq -r '.[]' Sources.json | sort -u > current_sources.txt
+          # حذف فاصله‌های اضافی بدون sed
           awk '{$1=$1;print}' valid_subscription_links.txt | sort -u > valid_sorted.txt
           cat current_sources.txt valid_sorted.txt | sort -u > merged_sources.txt
           ADDED=$(comm -13 current_sources.txt valid_sorted.txt | wc -l)
@@ -78,7 +79,7 @@ jobs:
           echo "✅ $ADDED لینک جدید از مرحله اعتبارسنجی اضافه شد."
 
       - name: بازیابی کش مخازن اسکن شده
-        uses: actions/cache@v4
+        uses: actions/cache@v5.0.5
         id: cache-scanned
         with:
           path: scanned_repos.txt
@@ -120,11 +121,13 @@ jobs:
           
           if [ -s all_current_links.txt ]; then
             while IFS= read -r url; do
+              # حذف فاصله‌ها با پارامتر expansion
               url="${url#"${url%%[![:space:]]*}"}"
               url="${url%"${url##*[![:space:]]}"}"
               [ -z "$url" ] && continue
               
-              REPO_INFO=$(echo "$url" | sed -n 's|https://raw\.githubusercontent\.com/\([^/]*\)/\([^/]*\)/.*|\1 \2|p')
+              # استخراج owner/repo با awk (جایگزین sed)
+              REPO_INFO=$(echo "$url" | awk -F'/' '{for(i=1;i<=NF;i++) if($i=="raw.githubusercontent.com") {print $(i+1), $(i+2); exit}}')
               [ -z "$REPO_INFO" ] && continue
               
               OWNER=$(echo "$REPO_INFO" | cut -d' ' -f1)
@@ -282,8 +285,9 @@ jobs:
           normalize_telegram() {
             local input="$1"
             input="${input#@}"
+            # استفاده از delimiter | در sed برای امنیت
             input=$(echo "$input" | sed -E 's|https?://(t\.me/|telegram\.me/|t\.me/s/)(.*)|\2|i')
-            input=$(echo "$input" | sed -E 's/[^a-zA-Z0-9_].*//')
+            input=$(echo "$input" | sed -E 's|[^a-zA-Z0-9_].*||')
             [ -z "$input" ] && return
             echo "https://t.me/$input"
           }
@@ -338,7 +342,7 @@ jobs:
           cat reports/update_summary.md >> $GITHUB_STEP_SUMMARY
 
       - name: آپلود گزارش
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: update-reports
           path: reports/
