@@ -17,51 +17,93 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read valid links and merge into Sources.json
+      - name: Prepare environment
         run: |
-          # اگر فایل معتبر وجود نداشت، خارج شو
-          if [ ! -s valid_subscription_links.txt ]; then
-            echo "⚠️ No valid_subscription_links.txt found or empty. Exiting."
-            exit 0
-          fi
-
-          # اطمینان از وجود Sources.json (در صورت نبود، یک آرایه خالی ایجاد کن)
+          mkdir -p reports
           if [ ! -f Sources.json ]; then
             echo "[]" > Sources.json
           fi
 
-          # استخراج لینک‌های فعلی از Sources.json
-          jq -r '.[]' Sources.json > current_sources.txt 2>/dev/null || true
+      - name: Check if valid links file exists
+        id: check_valid
+        run: |
+          if [ -s valid_subscription_links.txt ]; then
+            echo "has_valid=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_valid=false" >> $GITHUB_OUTPUT
+            echo "⚠️ No valid_subscription_links.txt found or empty. Skipping update."
+          fi
 
-          # فایل موقت برای لینک‌های جدید
+      - name: Merge valid links into Sources.json
+        id: merge
+        if: steps.check_valid.outputs.has_valid == 'true'
+        run: |
+          jq -r '.[]' Sources.json > current_sources.txt 2>/dev/null || touch current_sources.txt
+          
           > new_links.txt
-
-          # بررسی هر لینک معتبر: اگر در Sources.json نبود و هنوز کار می‌کند، اضافه کن
+          ADDED=0
+          
           while IFS= read -r url; do
             if ! grep -qxF "$url" current_sources.txt; then
-              echo "➕ Adding new link: $url"
               echo "$url" >> new_links.txt
+              echo "➕ Adding new link: $url"
+              ADDED=$((ADDED + 1))
             else
               echo "⏩ Already exists: $url"
             fi
           done < valid_subscription_links.txt
-
-          NEW_COUNT=$(wc -l < new_links.txt)
-          if [ "$NEW_COUNT" -eq 0 ]; then
+          
+          echo "ADDED_COUNT=$ADDED" >> $GITHUB_ENV
+          echo "ADDED_COUNT=$ADDED" >> $GITHUB_OUTPUT
+          
+          if [ "$ADDED" -gt 0 ]; then
+            jq --argfile new <(jq -R -s -c 'split("\n") | map(select(. != ""))' new_links.txt) '. += $new | unique' Sources.json > Sources.json.tmp
+            mv Sources.json.tmp Sources.json
+            echo "✅ Added $ADDED new links to Sources.json"
+          else
             echo "✅ No new links to add."
-            exit 0
           fi
 
-          # تبدیل لینک‌های جدید به فرمت JSON و ادغام با فایل موجود
-          jq --argfile new <(jq -R -s -c 'split("\n") | map(select(. != ""))' new_links.txt) '. += $new | unique' Sources.json > Sources.json.tmp
-          mv Sources.json.tmp Sources.json
-
-          echo "✅ Added $NEW_COUNT new links to Sources.json"
+      - name: Generate detailed report (no heredoc)
+        run: |
+          RAW_COUNT=$(cat subscription_links_raw.txt 2>/dev/null | wc -l | tr -d ' ' || echo 0)
+          FOUND_COUNT=$(cat subscription_links_found.txt 2>/dev/null | wc -l | tr -d ' ' || echo 0)
+          VALID_COUNT=$(cat valid_subscription_links.txt 2>/dev/null | wc -l | tr -d ' ' || echo 0)
+          ADDED_COUNT=${ADDED_COUNT:-0}
+          
+          # اطمینان از عددی بودن مقادیر
+          RAW_COUNT=${RAW_COUNT:-0}
+          FOUND_COUNT=${FOUND_COUNT:-0}
+          VALID_COUNT=${VALID_COUNT:-0}
+          
+          # حذف فایل قبلی
+          rm -f reports/subscription_update_report.md
+          
+          # ساخت گزارش با printf (بدون هیچ heredoc)
+          printf '# 📡 گزارش به‌روزرسانی ساب‌لینک‌ها\n\n' >> reports/subscription_update_report.md
+          printf '**تاریخ اجرا:** `%s`\n\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> reports/subscription_update_report.md
+          printf '## 📊 خلاصه آماری\n\n' >> reports/subscription_update_report.md
+          printf '| مرحله | تعداد |\n' >> reports/subscription_update_report.md
+          printf '|-------|-------|\n' >> reports/subscription_update_report.md
+          printf '| لینک‌های خام اولیه (subscription_links_raw.txt) | %d |\n' "$RAW_COUNT" >> reports/subscription_update_report.md
+          printf '| لینک‌های یافت شده توسط جستجو (subscription_links_found.txt) | %d |\n' "$FOUND_COUNT" >> reports/subscription_update_report.md
+          printf '| لینک‌های معتبر دارای کانفیگ (valid_subscription_links.txt) | %d |\n' "$VALID_COUNT" >> reports/subscription_update_report.md
+          printf '| **لینک‌های جدید اضافه شده به Sources.json** | **%d** |\n' "$ADDED_COUNT" >> reports/subscription_update_report.md
+          printf '\n' >> reports/subscription_update_report.md
+          printf '## 🔗 نمونه لینک‌های معتبر (حداکثر ۱۰ مورد)\n\n' >> reports/subscription_update_report.md
+          printf '```\n' >> reports/subscription_update_report.md
+          head -10 valid_subscription_links.txt 2>/dev/null || printf '(فایل موجود نیست یا خالی است)\n' >> reports/subscription_update_report.md
+          printf '```\n\n' >> reports/subscription_update_report.md
+          printf '---\n✅ این گزارش به صورت خودکار تولید شده است.\n' >> reports/subscription_update_report.md
+          
+          # اضافه کردن به job summary
+          cat reports/subscription_update_report.md >> $GITHUB_STEP_SUMMARY
 
       - name: Commit and push changes
+        if: steps.check_valid.outputs.has_valid == 'true'
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          git add Sources.json
-          git diff --staged --quiet || git commit -m "📡 Update Sources.json with new valid subscription links"
+          git add Sources.json reports/subscription_update_report.md
+          git diff --staged --quiet || git commit -m "📡 Update Sources.json with new valid subscription links ($(date '+%Y-%m-%d %H:%M:%S'))"
           git push
