@@ -74,8 +74,12 @@ jobs:
           cat current_sources.txt valid_sorted.txt | sort -u > merged_sources.txt
           ADDED=$(comm -13 current_sources.txt valid_sorted.txt | wc -l)
           echo "ADDED_COUNT=$ADDED" >> $GITHUB_ENV
-          jq -R . merged_sources.txt | jq -s . > Sources.json.tmp
-          mv Sources.json.tmp Sources.json
+          if [ -s merged_sources.txt ]; then
+            jq -R . merged_sources.txt | jq -s . > Sources.json.tmp
+            mv Sources.json.tmp Sources.json
+          else
+            echo "[]" > Sources.json
+          fi
           echo "✅ $ADDED لینک جدید از مرحله اعتبارسنجی اضافه شد."
 
       - name: بازیابی کش مخازن اسکن شده
@@ -191,13 +195,15 @@ jobs:
           fi
           echo "کلمات جستجو: $SEARCH_KEYWORDS"
           
+          # استفاده از tr به جای sed برای جایگزینی فاصله با +
+          QUERY=$(echo "$SEARCH_KEYWORDS" | tr ' ' '+')
+          
           DISCOVERED_REPOS="discovered_repos.txt"
           NEW_SUBS_DISCOVERED="new_subs_from_discovery.txt"
           > "$DISCOVERED_REPOS"
           > "$NEW_SUBS_DISCOVERED"
           
           for page in 1 2 3; do
-            QUERY=$(echo "$SEARCH_KEYWORDS" | sed 's/ /+/g')
             SEARCH_URL="https://api.github.com/search/repositories?q=$QUERY+extension:txt&sort=updated&order=desc&per_page=30&page=$page"
             RESP=$(curl -s -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github.v3+json" "$SEARCH_URL")
             
@@ -285,7 +291,7 @@ jobs:
           normalize_telegram() {
             local input="$1"
             input="${input#@}"
-            # استفاده از delimiter | در sed برای امنیت
+            # استفاده از # به عنوان جداکننده sed به جای | (رفع خطای unknown option)
             input=$(echo "$input" | sed -E 's#https?://(t\.me/|telegram\.me/|t\.me/s/)(.*)#\2#i')
             input=$(echo "$input" | sed -E 's|[^a-zA-Z0-9_].*||')
             [ -z "$input" ] && return
