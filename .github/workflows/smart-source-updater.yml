@@ -286,7 +286,7 @@ jobs:
             local input="$1"
             input="${input#@}"
             # استفاده از delimiter | در sed برای امنیت
-            input=$(echo "$input" | sed -E 's|https?://(t\.me/|telegram\.me/|t\.me/s/)(.*)|\2|i')
+            input=$(echo "$input" | sed -E 's#https?://(t\.me/|telegram\.me/|t\.me/s/)(.*)#\2#i')
             input=$(echo "$input" | sed -E 's|[^a-zA-Z0-9_].*||')
             [ -z "$input" ] && return
             echo "https://t.me/$input"
