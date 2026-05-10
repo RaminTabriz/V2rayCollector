@@ -34,44 +34,43 @@ jobs:
             echo "⚠️ No valid_subscription_links.txt found or empty. Skipping update."
           fi
 
-      - name: Merge valid links into Sources.json
+      - name: Merge valid links into Sources.json (no jq, simple method)
         id: merge
         if: steps.check_valid.outputs.has_valid == 'true'
         run: |
-          jq -r '.[]' Sources.json > current_sources.txt 2>/dev/null || touch current_sources.txt
+          # استخراج لینک‌های فعلی از Sources.json (با حذف براکت‌ها و کاماها)
+          cat Sources.json | sed 's/[][]//g' | tr ',' '\n' | sed 's/"//g' | sed 's/^ *//;s/ *$//' | grep -v '^$' > current_sources.txt 2>/dev/null || true
           
-          > new_links.txt
-          ADDED=0
+          # اضافه کردن لینک‌های معتبر به فایل موقت
+          cat valid_subscription_links.txt >> current_sources.txt
           
-          while IFS= read -r url; do
-            if ! grep -qxF "$url" current_sources.txt; then
-              echo "$url" >> new_links.txt
-              echo "➕ Adding new link: $url"
-              ADDED=$((ADDED + 1))
-            else
-              echo "⏩ Already exists: $url"
-            fi
-          done < valid_subscription_links.txt
+          # مرتب‌سازی و حذف تکراری‌ها
+          sort -u current_sources.txt > merged_sources.txt
           
+          # شمارش تعداد لینک‌های جدید
+          # (تفاوت بین merged_sources.txt و Sources.json اصلی)
+          ORIGINAL_COUNT=$(cat current_sources.txt | sort | uniq | wc -l)
+          FINAL_COUNT=$(cat merged_sources.txt | wc -l)
+          ADDED=$((FINAL_COUNT - ORIGINAL_COUNT))
           echo "ADDED_COUNT=$ADDED" >> $GITHUB_ENV
-          echo "ADDED_COUNT=$ADDED" >> $GITHUB_OUTPUT
           
-          if [ "$ADDED" -gt 0 ]; then
-            # تبدیل new_links.txt به JSON array
-            jq -R -s -c 'split("\n") | map(select(. != ""))' new_links.txt > new_links.json
-            # ادغام Sources.json با new_links.json (با حذف تکراری‌ها)
-            jq -s '.[0] + .[1] | unique' Sources.json new_links.json > Sources.json.tmp
-            mv Sources.json.tmp Sources.json
-            echo "✅ Added $ADDED new links to Sources.json"
-          else
-            echo "✅ No new links to add."
-          fi
+          # ساخت فایل JSON جدید
+          echo "[" > Sources.json.new
+          cat merged_sources.txt | while read -r line; do
+            echo "  \"$line\"," >> Sources.json.new
+          done
+          # حذف کاما آخرین خط و بستن آرایه
+          sed -i '$ s/,$//' Sources.json.new
+          echo "]" >> Sources.json.new
+          
+          mv Sources.json.new Sources.json
+          echo "✅ Added $ADDED new links to Sources.json"
 
-      - name: Generate detailed report (no heredoc)
+      - name: Generate detailed report
         run: |
-          RAW_COUNT=$(cat subscription_links_raw.txt 2>/dev/null | wc -l | tr -d ' ' || echo 0)
-          FOUND_COUNT=$(cat subscription_links_found.txt 2>/dev/null | wc -l | tr -d ' ' || echo 0)
-          VALID_COUNT=$(cat valid_subscription_links.txt 2>/dev/null | wc -l | tr -d ' ' || echo 0)
+          RAW_COUNT=$(cat subscription_links_raw.txt 2>/dev/null | wc -l | tr -d ' ')
+          FOUND_COUNT=$(cat subscription_links_found.txt 2>/dev/null | wc -l | tr -d ' ')
+          VALID_COUNT=$(cat valid_subscription_links.txt 2>/dev/null | wc -l | tr -d ' ')
           ADDED_COUNT=${ADDED_COUNT:-0}
           
           RAW_COUNT=${RAW_COUNT:-0}
