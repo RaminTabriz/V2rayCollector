@@ -1,0 +1,15 @@
+tg://proxy?server=rkn.lat&port=443&secret=eed33cc1365fef45292c52736f6695df6f6d61782e7275🔗
+tg://proxy?server=yazaebalsyadelatproxy.uk&port=443&secret=ee69e899d89ec68e220ca177557322b27f7275737369616e2d616e696d616c732e7275🔗
+tg://proxy?server=178.104.244.158&port=8080&secret=dd104462821249bd7ac519130220c25d09🔗
+tg://proxy?server=172.234.115.238&port=443&secret=3a3365be03d6bc13518d65e70a3146c2🔗
+tg://proxy?server=157.90.124.2&port=4455&secret=dd104462821249bd7ac519130220c25d09🔗
+tg://proxy?server=135.181.31.175&port=443&secret=dd104462821249bd7ac519130220c25d09──────────────📢
+tg://proxy?server=ninja.spectranet.pro&port=443&secret=eec72c7ef46ddd254e5fb5f248521c4f986e696e6a612e737065637472616e65742e70726f🔗
+tg://proxy?server=another.life.mambabot.net&port=4515&secret=eee9a4f23b1d768c04a8d7f39120ca5b6e626973636f7474692e79656b74616e65742e636f6d🔗
+tg://proxy?server=172.86.95.195&port=443&secret=eeb30612d6f0fac137fa363faee6afe3377262632e7275🔗
+tg://proxy?server=91.98.231.23&port=443&secret=dd104462821249bd7ac519130220c25d09🔗
+tg://proxy?server=arixo.shop&port=443&secret=eec11798ab008831b474066c9e1ebf5c9978352e7275🔗
+tg://proxy?server=135.181.31.175&port=443&secret=dd104462821249bd7ac519130220c25d09🔗
+tg://proxy?server=172.86.95.195&port=443&secret=eeb30612d6f0fac137fa363faee6afe3377262632e7275──────────────📢
+tg://proxy?server=xn--80agb2axz5d.xn--80ajveggb2e.xn--p1ai&port=443&secret=ee69e899d89ec68e220ca177557322b27f7275737369616e2d616e696d616c732e7275🔗
+tg://proxy?server=tg2.uniqvpn.online&port=4515&secret=ee2e1e044a0ee0ce3efbbd27ef6a65f5126170706c652e636f6d🔗

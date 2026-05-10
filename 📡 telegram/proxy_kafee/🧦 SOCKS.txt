@@ -1,0 +1,5 @@
+socks://bnVsbDpudWxs@62.220.126.92:30871#%40proxy_kafee%20%7C%20%D8%AA%D8%B1%DA%A9%DB%8C%D8%A8%DB%8C
+socks://Og@62.220.126.56:30170#%40proxy_kafee2
+socks://Og@130.185.75.82:9595#%40proxy_kafee%20%7C%20%D8%AA%D8%B1%DA%A9%DB%8C%D8%A8%DB%8C
+socks://Og@130.185.75.82:9595#%40proxy_kafeeترکیبی
+socks://Og@62.220.126.56:30170#%40proxy_kafee2ترکیبی

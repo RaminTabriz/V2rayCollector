@@ -1,0 +1,1 @@
+trojan://humanity@104.20.6.134:443?security=tls&sni=www.calmloud.com&fp=chrome&alpn=http%2F1.1&insecure=0&allowInsecure=0&type=ws&host=www.calmloud.com&path=%2Fassignment#https%3A%2F%2Ft.me%2Fv2ray_youtube

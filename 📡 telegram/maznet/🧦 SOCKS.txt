@@ -1,0 +1,7 @@
+socks://Og@62.220.126.92:30376#%40Maznet%20-Psiphon-8
+socks://Og@185.79.96.94:1070#%40Maznet%20-Psiphon%20-7📍📍کانفیگ
+socks://Og@185.79.96.94:1070#%40Maznet%20-Psiphon%20-7
+socks://Og@62.220.126.56:32139#%40Maznet%20-Psiphon-11
+socks://Og@62.220.126.56:32139#%40Maznet%20-Psiphon-11📍کانفیگ
+socks://Og@62.220.126.92:30494#%40Maznet%20-Psiphon-10
+socks://Og@62.220.126.92:30230#%40Maznet%20-Psiphon-9

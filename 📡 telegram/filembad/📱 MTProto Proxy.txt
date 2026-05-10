@@ -1,0 +1,4 @@
+tg://proxy?server=213.233.184.133&port=6777&secret=dd3b54584a0135f19594825070bb1450d0
+tg://proxy?server=2.27.59.225&port=443&secret=eebe232d8569992025370b3fd21684a9576c696e6b2e6d61782e7275
+tg://proxy?server=b.similemat.com&port=2443&secret=5467af21db9f8a03a7786dd43d4d7c45
+tg://proxy?server=88.99.27.186&port=443&secret=dd104462821249bd7ac519130220c25d09🔹

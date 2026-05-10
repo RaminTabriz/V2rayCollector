@@ -1,0 +1,2 @@
+tg://proxy?server=77.42.123.21&port=443&secret=dd104462821249bd7ac519130220c25d09Proxy◖@V2RAYNG_FARS◗
+tg://proxy?server=yazaebalsyadelatproxy.uk&port=443&secret=ee69e899d89ec68e220ca177557322b27f7275737369616e2d616e696d616c732e7275Proxy◖@V2RAYNG_FARS◗

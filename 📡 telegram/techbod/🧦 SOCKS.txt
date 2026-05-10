@@ -1,0 +1,5 @@
+socks://Og==@62.220.126.56:25393?type=tcp#@techbod
+socks://Og==@62.220.126.56:26274?type=tcp#@techbod
+socks://193.176.242.86:1080?type=tcp#@techbod
+socks://Og==@62.220.126.56:27211?type=tcp#@techbod
+socks://Og==@80.210.37.38:1080?type=tcp#@techbod

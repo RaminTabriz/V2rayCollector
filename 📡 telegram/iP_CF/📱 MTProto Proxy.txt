@@ -1,0 +1,1 @@
+tg://proxy?server=gg.etherealvpn.uk&port=443&secret=eee2c7176c8fc89b33fef34325dc5b9f01d186d17777772e6d6963726f736f66742e636f6d

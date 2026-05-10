@@ -1,0 +1,1 @@
+ss://TIGNAL@142.54.178.211:443?encryption=none&type=xhttp&security=tls&path=%2Flogin&host=wallweb12.netlify.app&mode=auto&sni=kubernetes.io&alpn=h2%2Chttp%2F1.1&allowInsecure=1#filembad-214

@@ -1,0 +1,8 @@
+socks://62.220.126.92:30871?type=tcp#@YamYamProxy
+socks://Og@62.220.126.92:30871#@YamYamProxy
+socks://130.185.75.82:9595?type=tcp#@YamYamProxy
+socks://193.151.130.53:8080?type=tcp#@YamYamProxy
+socks://62.220.126.56:24353?type=tcp#@YamYamProxyترکیبات
+socks://62.220.126.56:24353?type=tcp#@YamYamProxy
+socks://62.220.126.92:30871?type=tcp#@YamYamProxyترکیبات
+socks://Og@62.220.126.92:30871#@YamYamProxyترکیبات

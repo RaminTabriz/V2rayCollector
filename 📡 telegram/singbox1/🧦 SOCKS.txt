@@ -1,0 +1,7 @@
+socks://Og@130.185.75.82:9595#%40proxy_kafee
+socks://Og@62.220.126.56:30170#3%40proxy_kafee3
+socks://Og@79.175.177.96:1080#%40proxy_kafee4
+socks://Og@79.175.177.96:1080#%40proxy_kafee4ترکیبی
+socks://Og@62.220.126.56:26132#%40proxy_kafee1
+socks://Og@62.220.126.56:30170#proxy_kafeeترکیبی
+socks://Og@62.220.126.56:30170#proxy_kafee

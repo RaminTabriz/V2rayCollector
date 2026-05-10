@@ -1,0 +1,5 @@
+tg://socks?server=127.0.0.1&port=10886@vpnv2rayNGv
+tg://socks?server=127.0.0.1&port=10886
+tg://socks?server=STARLINK8.vayzro.ir&port=42528&user=%40Porteqal3&pass=Portiqal
+tg://socks?server=127.0.0.1&port=10886@meliproxyy
+tg://socks?server=STARLINK8.vayzro.ir&port=42528&user=%40Porteqal3&pass=Portiqalبرای

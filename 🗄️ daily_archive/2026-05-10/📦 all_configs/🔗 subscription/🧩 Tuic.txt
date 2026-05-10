@@ -1,0 +1,4 @@
+tuic://87bc1693-8860-41d7-acf4-e6edf49abbbb:crivAv10hAdr-fop4Lne@70.34.197.98:443?congestion_control=bbr&amp%3Budp_relay_mode=native&amp%3Balpn=h3%2Cspdy/3.1&amp%3Ballow_insecure=1#%F0%9F%87%B8%F0%9F%87%AA%20SE%20%7C%20TUIC%20%7C%20%40vipv2rey%20%231
+tuic://dacd2765-2332-4817-83c4-273df586c8c5:dacd2765-2332-4817-83c4-273df586c8c5@91.195.240.12:24147/?congestion_control=bbr&udp_relay_mode=native&alpn=h3#%40v2rayserverfreenet%20
+tuic://0347eba2-eb71-46b0-b7f6-229e98085d80:0347eba2-eb71-46b0-b7f6-229e98085d80@poke.rushshop.club:11163?sni=poke.rushshop.club&alpn=h3&congestion_control=bbr#%40vmessprotocol%20%20%D8%B1%D9%81%D8%B9%20%D9%81%DB%8C%D9%84%D8%AA%D8
+tuic://0347eba2-eb71-46b0-b7f6-229e98085d80:0347eba2-eb71-46b0-b7f6-229e98085d80@45.82.244.50:11163/?congestion_control=bbr&udp_relay_mode=quic&sni=poke.rushshop.club&alpn=h3&disable_sni=1#SHERVIN%20
