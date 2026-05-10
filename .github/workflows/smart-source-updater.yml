@@ -40,9 +40,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: نصب jq با استفاده از action رسمی
+      - name: نصب jq
         uses: actions/setup-jq@v1
         with:
           jq-version: '1.7'
@@ -54,16 +54,15 @@ jobs:
           if [ ! -f channels.csv ]; then echo "# Telegram Channels" > channels.csv; fi
           if [ ! -f filters.json ]; then
             cat > filters.json << 'EOF'
-{
-  "exclude_repos": [],
-  "include_paths": ["", "main", "subscriptions", "sub", "Sub", "subs", "sing-box", "clash", "v2ray", "configs"],
-  "exclude_patterns": ["test", "sample", "example", "demo"],
-  "search_keywords": ["v2ray", "subscription", "config.txt", "vmess", "vless"]
-}
-EOF
+          {
+            "exclude_repos": [],
+            "include_paths": ["", "main", "subscriptions", "sub", "Sub", "subs", "sing-box", "clash", "v2ray", "configs"],
+            "exclude_patterns": ["test", "sample", "example", "demo"],
+            "search_keywords": ["v2ray", "subscription", "config.txt", "vmess", "vless"]
+          }
+          EOF
           fi
 
-      # ========================= مرحله 1: ادغام لینک‌های معتبر =========================
       - name: بررسی وجود فایل معتبر
         id: check_valid
         run: |
@@ -85,26 +84,23 @@ EOF
           mv Sources.json.tmp Sources.json
           echo "✅ $ADDED لینک جدید از مرحله اعتبارسنجی اضافه شد."
 
-      # ========================= مرحله 2: کش مخازن اسکن شده =========================
       - name: بازیابی کش مخازن اسکن شده
         uses: actions/cache@v4
         id: cache-scanned
         with:
           path: scanned_repos.txt
-          # کلید ثابت بدون run_id برای حفظ کش بین اجراهای مختلف
-          key: scanned-repos-${{ github.repository_id }}
+          key: scanned-repos-${{ github.repository }}
           restore-keys: |
-            scanned-repos-${{ github.repository_id }}
+            scanned-repos-${{ github.repository }}
 
       - name: آماده‌سازی لیست مخازن اسکن شده
         run: |
           if [ ! -f scanned_repos.txt ]; then touch scanned_repos.txt; fi
-          if [[ "${{ github.event.inputs.force_rescan }}" == "true" ]]; then
+          if [ "${{ github.event.inputs.force_rescan }}" = "true" ]; then
             echo "⚠️ پاک کردن کش مخازن به دلیل force_rescan"
             > scanned_repos.txt
           fi
 
-      # ========================= مرحله 3: اسکن مخازن موجود در Sources.json =========================
       - name: اسکن مخازن موجود (برای ساب‌لینک‌های جدید)
         if: github.event.inputs.enable_scan != 'false' || github.event_name == 'workflow_run'
         env:
@@ -173,7 +169,6 @@ EOF
           fi
           echo "✅ اسکن مخازن موجود پایان یافت. $NEW_COUNT ساب جدید پیدا شد."
 
-      # ========================= مرحله 4: جستجوی مخازن جدید در گیت‌هاب =========================
       - name: جستجوی مخازن جدید با GitHub Search
         if: github.event.inputs.enable_discovery == 'true'
         env:
@@ -220,8 +215,6 @@ EOF
           INCLUDE_PATHS=$(jq -r '.include_paths[]' filters.json 2>/dev/null)
           EXCLUDE_PATTERNS=$(jq -r '.exclude_patterns[]' filters.json 2>/dev/null | tr '\n' '|')
           
-          # خواندن لینک‌های فعلی (که شامل لینک‌های مرحله 3 نیز می‌شود)
-          # در این مرحله all_current_links.txt از مرحله قبل وجود دارد و شامل لینک‌های قبلی+جدید اسکن شده است
           cp all_current_links.txt all_current_links_backup.txt
           
           while IFS= read -r repo_full; do
@@ -252,9 +245,7 @@ EOF
             sleep 0.2
           done < new_repos_to_scan.txt
           
-          # اضافه کردن لینک‌های جدید کشف شده به all_current_links.txt
           if [ -s "$NEW_SUBS_DISCOVERED" ]; then
-            # ادغام لینک‌های موجود (که شامل لینک‌های مرحله 3 و قدیمی هستند) با لینک‌های جدید
             sort -u all_current_links.txt "$NEW_SUBS_DISCOVERED" -o all_current_links.txt
             DISCOVERED_COUNT=$(wc -l < "$NEW_SUBS_DISCOVERED")
             echo "DISCOVERED_LINKS_COUNT=$DISCOVERED_COUNT" >> $GITHUB_ENV
@@ -263,7 +254,6 @@ EOF
             echo "هیچ ساب لینک معتبری در مخازن جدید یافت نشد."
           fi
 
-      # ========================= مرحله 5: بازسازی نهایی Sources.json =========================
       - name: بازسازی نهایی Sources.json
         run: |
           if [ -s all_current_links.txt ]; then
@@ -274,11 +264,9 @@ EOF
             echo "هیچ لینکی برای به‌روزرسانی وجود ندارد."
           fi
 
-      # ========================= مرحله 6: استخراج کانال‌های تلگرام =========================
       - name: استخراج کانال‌های تلگرام از ساب‌لینک‌ها
         run: |
           echo "📡 استخراج کانال‌های تلگرام..."
-          # جمع‌آوری همه لینک‌های ساب (قدیمی + جدید + کشف شده)
           cat all_current_links.txt new_from_scan.txt new_subs_from_discovery.txt 2>/dev/null | sort -u > all_subs.txt
           
           > telegram_channels_temp.txt
@@ -320,7 +308,6 @@ EOF
             echo "هیچ کانال تلگرام جدیدی یافت نشد."
           fi
 
-      # ========================= مرحله 7: گزارش =========================
       - name: گزارش نهایی
         run: |
           ADDED=${ADDED_COUNT:-0}
@@ -348,14 +335,11 @@ EOF
           name: update-reports
           path: reports/
 
-      # ========================= مرحله 8: Commit و Push (بدون فایل‌های موقت) =========================
       - name: Commit و Push تغییرات
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions Bot"
-          # فقط فایل‌های ضروری را اضافه کنید (Sources.json, scanned_repos.txt, channels.csv, reports)
           git add Sources.json scanned_repos.txt channels.csv reports/
-          # در صورت وجود تغییرات در فایل‌های دیگر مانند filters.json (اگر کاربر تغییر داده) می‌توان اضافه کرد اما بهتر است جداگانه
           if git diff --staged --quiet; then
             echo "هیچ تغییری برای commit وجود ندارد."
           else
