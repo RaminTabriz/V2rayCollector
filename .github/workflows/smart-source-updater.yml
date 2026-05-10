@@ -1,4 +1,4 @@
-name: Sources Updater with Basic Scan
+name: Smart Subscription Sources Updater
 
 on:
   workflow_run:
@@ -6,67 +6,256 @@ on:
     types:
       - completed
   workflow_dispatch:
+    inputs:
+      enable_scan:
+        description: 'Scan repositories for new subscription links?'
+        type: boolean
+        default: true
+      force_rescan:
+        description: 'Force re-scan all repositories (ignore cache)?'
+        type: boolean
+        default: false
+
+concurrency:
+  group: update-sources
+  cancel-in-progress: true
 
 permissions:
   contents: write
 
 jobs:
-  update:
+  update-sources:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-      
-      - name: Merge valid links
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Prepare environment
         run: |
-          if [ ! -s valid_subscription_links.txt ]; then
-            echo "No valid links, skipping merge"
-            exit 0
+          sudo apt-get update && sudo apt-get install -y jq
+          mkdir -p reports
+          if [ ! -f Sources.json ]; then echo "[]" > Sources.json; fi
+          if [ ! -f channels.csv ]; then echo "# Telegram Channels" > channels.csv; fi
+          if [ ! -f filters.json ]; then
+            echo '{"exclude_repos": [], "include_paths": ["", "main", "subscriptions", "sub", "Sub", "subs", "sing-box", "clash", "v2ray", "configs"], "exclude_patterns": ["test", "sample", "example", "demo"]}' > filters.json
           fi
-          jq -r '.[]' Sources.json | sort -u > current.txt
-          cat valid_subscription_links.txt | sort -u > new.txt
-          cat current.txt new.txt | sort -u > merged.txt
-          jq -R . merged.txt | jq -s . > Sources.json
-      
-      - name: Basic scan for new .txt files
+
+      # ========================= مرحله 1: ادغام لینک‌های معتبر =========================
+      - name: Check for valid links file
+        id: check_valid
+        run: |
+          if [ -s valid_subscription_links.txt ]; then
+            echo "has_valid=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_valid=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Merge valid links into Sources.json
+        if: steps.check_valid.outputs.has_valid == 'true'
+        run: |
+          jq -r '.[]' Sources.json | sort -u > current_sources.txt
+          sed 's/^[[:space:]]*//;s/[[:space:]]*$//' valid_subscription_links.txt | sort -u > valid_sorted.txt
+          cat current_sources.txt valid_sorted.txt | sort -u > merged_sources.txt
+          ADDED=$(comm -13 current_sources.txt valid_sorted.txt | wc -l)
+          echo "ADDED_COUNT=$ADDED" >> $GITHUB_ENV
+          jq -R . merged_sources.txt | jq -s . > Sources.json.tmp
+          mv Sources.json.tmp Sources.json
+
+      # ========================= مرحله 2: بازیابی کش (اختیاری) =========================
+      - name: Restore scanned repos cache
+        uses: actions/cache@v4
+        id: cache-scanned
+        with:
+          path: scanned_repos.txt
+          key: scanned-repos-${{ github.repository_id }}-${{ github.run_id }}
+          restore-keys: |
+            scanned-repos-${{ github.repository_id }}-
+
+      - name: Initialize scanned repos list
+        run: |
+          if [ ! -f scanned_repos.txt ]; then touch scanned_repos.txt; fi
+          if [[ "${{ github.event.inputs.force_rescan }}" == "true" ]]; then
+            > scanned_repos.txt
+          fi
+
+      # ========================= مرحله 3: اسکن مخازن =========================
+      - name: Scan repositories for new subscription files
+        if: github.event.inputs.enable_scan != 'false' || github.event_name == 'workflow_run'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          jq -r '.[]' Sources.json > all_links.txt
-          > new_from_scan.txt
+          echo "🔍 Starting repository scan"
+          NEW_LINKS_FROM_SCAN="new_from_scan.txt"
+          > "$NEW_LINKS_FROM_SCAN"
+          
+          EXCLUDE_REPOS=$(jq -r '.exclude_repos[]' filters.json 2>/dev/null || echo "")
+          INCLUDE_PATHS=$(jq -r '.include_paths[]' filters.json 2>/dev/null || echo "")
+          EXCLUDE_PATTERNS=$(jq -r '.exclude_patterns[]' filters.json 2>/dev/null || echo "")
+          
+          jq -r '.[]' Sources.json > all_current_links.txt
           
           while IFS= read -r url; do
-            # استخراج owner/repo
-            owner_repo=$(echo "$url" | sed -n 's|https://raw.githubusercontent.com/\([^/]*/[^/]*\)/.*|\1|p')
-            [ -z "$owner_repo" ] && continue
+            url="${url#"${url%%[![:space:]]*}"}"
+            url="${url%"${url##*[![:space:]]}"}"
+            [ -z "$url" ] && continue
             
-            # فقط پوشه اصلی (main) را چک کن
-            api_url="https://api.github.com/repos/$owner_repo/contents/"
-            resp=$(curl -s -H "Authorization: token $GH_TOKEN" "$api_url")
+            REPO_INFO=$(echo "$url" | sed -n 's|https://raw\.githubusercontent\.com/\([^/]*\)/\([^/]*\)/.*|\1 \2|p')
+            [ -z "$REPO_INFO" ] && continue
             
-            # پیدا کردن فایل‌های .txt
-            echo "$resp" | jq -r '.[] | select(.type=="file") | select(.name | endswith(".txt")) | .download_url' 2>/dev/null | while read -r file_url; do
-              if ! grep -Fxq "$file_url" all_links.txt; then
-                echo "$file_url" >> new_from_scan.txt
-                echo "Found new: $file_url"
+            OWNER=$(echo "$REPO_INFO" | cut -d' ' -f1)
+            REPO=$(echo "$REPO_INFO" | cut -d' ' -f2)
+            REPO_FULL="$OWNER/$REPO"
+            
+            if echo "$EXCLUDE_REPOS" | grep -Fxq "$REPO_FULL" 2>/dev/null; then continue; fi
+            if grep -Fxq "$REPO_FULL" scanned_repos.txt 2>/dev/null; then continue; fi
+            
+            echo "📁 Scanning repo: $REPO_FULL"
+            
+            for dir_path in $INCLUDE_PATHS; do
+              API_URL="https://api.github.com/repos/$OWNER/$REPO/contents/$dir_path"
+              response=$(curl -s -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github.v3+json" "$API_URL")
+              
+              if echo "$response" | grep -q "API rate limit exceeded"; then
+                echo "❌ Rate limit exceeded!"
+                break 2
               fi
+              if echo "$response" | jq -e '.message == "Not Found"' > /dev/null 2>&1; then continue; fi
+              
+              echo "$response" | jq -r '.[] | select(.type=="file") | select(.name | endswith(".txt")) | .download_url' 2>/dev/null > /tmp/files.txt
+              if [ ! -s /tmp/files.txt ]; then continue; fi
+              
+              cat /tmp/files.txt | while IFS= read -r file_url; do
+                skip=0
+                for pattern in $EXCLUDE_PATTERNS; do
+                  if echo "$file_url" | grep -qi "$pattern"; then skip=1; break; fi
+                done
+                [ $skip -eq 1 ] && continue
+                
+                if curl -sL --max-time 10 "$file_url" | head -c 2000 | grep -qE '(vmess|vless|trojan|ss://|ssr://)'; then
+                  if ! grep -Fxq "$file_url" all_current_links.txt; then
+                    echo "$file_url" >> "$NEW_LINKS_FROM_SCAN"
+                    echo "  ✅ New subscription: $file_url"
+                  fi
+                fi
+              done
             done
-            sleep 0.5
-          done < all_links.txt
+            echo "$REPO_FULL" >> scanned_repos.txt
+            sleep 0.2
+          done < all_current_links.txt
           
-          # اضافه کردن لینک‌های جدید
-          if [ -s new_from_scan.txt ]; then
-            cat all_links.txt new_from_scan.txt | sort -u > all_links_new.txt
-            jq -R . all_links_new.txt | jq -s . > Sources.json
-            echo "Added $(wc -l < new_from_scan.txt) new links from scan"
+          sort -u -o "$NEW_LINKS_FROM_SCAN" "$NEW_LINKS_FROM_SCAN" 2>/dev/null
+          NEW_COUNT=$(wc -l < "$NEW_LINKS_FROM_SCAN" 2>/dev/null || echo "0")
+          echo "NEW_LINKS_FROM_SCAN_COUNT=$NEW_COUNT" >> $GITHUB_ENV
+          if [ "$NEW_COUNT" -gt 0 ]; then
+            cat "$NEW_LINKS_FROM_SCAN" >> all_current_links.txt
+            sort -u all_current_links.txt -o all_current_links.txt
           fi
-      
-      - name: Commit
+
+      # ========================= مرحله 4: بازسازی Sources.json =========================
+      - name: Final rebuild Sources.json
+        run: |
+          if [ -s all_current_links.txt ]; then
+            jq -R . all_current_links.txt | jq -s . > Sources.json.new
+            mv Sources.json.new Sources.json
+          fi
+
+      # ========================= مرحله 5: استخراج کانال‌های تلگرام =========================
+      - name: Extract Telegram channels from subscription links
+        run: |
+          echo "📡 Extracting Telegram channels from subscription files and URLs"
+          
+          # جمع‌آوری همه لینک‌های ساب (قدیمی + جدید)
+          cat all_current_links.txt new_from_scan.txt 2>/dev/null | sort -u > all_subs.txt
+          
+          # فایل موقت برای ذخیره کانال‌های پیدا شده
+          > telegram_channels_temp.txt
+          
+          # تابع تبدیل به فرمت استاندارد
+          normalize_telegram() {
+            local input="$1"
+            # حذف @ اول
+            input="${input#@}"
+            # حذف https?://t.me/s/ یا https?://telegram.me/ و غیره
+            input=$(echo "$input" | sed -E 's|https?://(t\.me/|telegram\.me/|t\.me/s/)(.*)|\2|i')
+            # حذف هر چیز غیر از slug کانال (حروف، اعداد، زیرخط)
+            input=$(echo "$input" | sed -E 's/[^a-zA-Z0-9_].*//')
+            [ -z "$input" ] && return
+            echo "https://t.me/$input"
+          }
+          
+          # 1. استخراج از خود آدرس فایل‌ها (در صورت داشتن @ یا t.me)
+          cat all_subs.txt | while IFS= read -r sub_url; do
+            # بررسی خود لینک
+            if echo "$sub_url" | grep -qE '(t\.me/|telegram\.me/|@[a-zA-Z0-9_]+)'; then
+              channel=$(echo "$sub_url" | grep -oE '(t\.me/[a-zA-Z0-9_]+|telegram\.me/[a-zA-Z0-9_]+|@[a-zA-Z0-9_]+)' | head -1)
+              norm=$(normalize_telegram "$channel")
+              [ -n "$norm" ] && echo "$norm" >> telegram_channels_temp.txt
+            fi
+            
+            # 2. دانلود محتوای فایل (حداکثر 5 کیلوبایت) و جستجوی لینک تلگرام
+            curl -sL --max-time 10 "$sub_url" | head -c 5000 | grep -oE '(https?://(t\.me/|telegram\.me/)[a-zA-Z0-9_]+|@[a-zA-Z0-9_]+)' | while read -r match; do
+              norm=$(normalize_telegram "$match")
+              [ -n "$norm" ] && echo "$norm" >> telegram_channels_temp.txt
+            done
+          done
+          
+          # یکتا سازی و حذف خطوط تکراری
+          sort -u telegram_channels_temp.txt -o telegram_channels_temp.txt
+          
+          # خواندن کانال‌های موجود در channels.csv (ستون اول یا هر خطی که با https://t.me شروع شود)
+          if [ -f channels.csv ]; then
+            grep -Eo 'https://t\.me/[a-zA-Z0-9_]+' channels.csv | sort -u > existing_channels.txt
+          else
+            > existing_channels.txt
+          fi
+          
+          # پیدا کردن کانال‌های جدید
+          comm -13 existing_channels.txt telegram_channels_temp.txt > new_channels.txt
+          NEW_CHANNELS=$(wc -l < new_channels.txt)
+          echo "Found $NEW_CHANNELS new Telegram channels"
+          
+          if [ $NEW_CHANNELS -gt 0 ]; then
+            # اضافه کردن به channels.csv (فرمت: یک لینک در هر خط)
+            cat new_channels.txt >> channels.csv
+            echo "✅ Added $NEW_CHANNELS channels to channels.csv"
+          else
+            echo "No new Telegram channels found"
+          fi
+          
+          echo "NEW_CHANNELS_COUNT=$NEW_CHANNELS" >> $GITHUB_ENV
+
+      # ========================= مرحله 6: تولید گزارش =========================
+      - name: Generate report
+        run: |
+          ADDED=${ADDED_COUNT:-0}
+          SCAN_ADDED=${NEW_LINKS_FROM_SCAN_COUNT:-0}
+          CHANNELS=${NEW_CHANNELS_COUNT:-0}
+          DATE=$(date '+%Y-%m-%d %H:%M:%S')
+          mkdir -p reports
+          {
+            echo "# 📡 گزارش به‌روزرسانی"
+            echo "**تاریخ:** $DATE"
+            echo "- لینک‌های جدید از ادغام: $ADDED"
+            echo "- لینک‌های جدید از اسکن: $SCAN_ADDED"
+            echo "- کانال‌های تلگرام جدید: $CHANNELS"
+          } > reports/update_summary.md
+          cat reports/update_summary.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-reports
+          path: reports/
+
+      # ========================= مرحله 7: Commit و Push =========================
+      - name: Commit and push changes
         run: |
           git config user.email "actions@github.com"
-          git config user.name "GitHub Actions"
-          git add Sources.json new_from_scan.txt
-          git diff --staged --quiet || git commit -m "Update Sources.json with scan"
-          git push
+          git config user.name "GitHub Actions Bot"
+          git add Sources.json scanned_repos.txt new_from_scan.txt channels.csv reports/ 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update: +${ADDED_COUNT:-0} subs, +${NEW_LINKS_FROM_SCAN_COUNT:-0} scanned, +${NEW_CHANNELS_COUNT:-0} channels"
+            git push
+          fi
