@@ -1,4 +1,4 @@
-name: Find Subscription Links on GitHub
+name: Find & Validate Subscription Links on GitHub
 
 on:
   schedule:
@@ -59,7 +59,6 @@ jobs:
                   
                   hasNext = result.data.items.length === 100;
                   page++;
-                  // تاخیر برای جلوگیری از rate limit
                   await new Promise(r => setTimeout(r, 500));
                 } catch (err) {
                   console.log(`Error with query ${q} page ${page}: ${err.message}`);
@@ -71,23 +70,66 @@ jobs:
             const urlList = Array.from(allUrls);
             console.log(`Found ${urlList.length} unique raw URLs`);
             
-            // ذخیره در فایل
-            fs.writeFileSync('subscription_links_found.txt', urlList.join('\n'));
-            
-            // بازگرداندن تعداد برای مرحله بعد
+            // ذخیره همه لینک‌های خام (بدون اعتبارسنجی)
+            fs.writeFileSync('subscription_links_raw.txt', urlList.join('\n'));
             return urlList.length;
+
+      - name: Validate each link (status + config presence)
+        run: |
+          # حذف فایل قبلی در صورت وجود
+          rm -f valid_subscription_links.txt
+          touch valid_subscription_links.txt
+          
+          # تابع بررسی یک لینک
+          check_link() {
+            local url="$1"
+            # بررسی HTTP status با HEAD (سریع)
+            local status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$url" 2>/dev/null)
+            if [ "$status" != "200" ]; then
+              echo "❌ $url -> status $status"
+              return 1
+            fi
             
+            # دانلود 1KB اول محتوا برای بررسی کانفیگ
+            local content=$(curl -s --max-time 10 --range 0-1024 "$url" 2>/dev/null)
+            if [ -z "$content" ]; then
+              echo "⚠️ $url -> empty content"
+              return 1
+            fi
+            
+            # الگوهای تشخیص کانفیگ (همان الگوهای اصلی پروژه)
+            if echo "$content" | grep -qE '(vmess://|vless://|trojan://|ss://|ssr://|hysteria2://|hy2://|tuic://|wireguard://|tg://proxy|tg://socks|slipnet://|socks5?://|-----BEGIN ARGO VPN BRIDGE BLOCK-----)'; then
+              echo "✅ $url -> valid"
+              echo "$url" >> valid_subscription_links.txt
+            else
+              echo "⚠️ $url -> no config pattern found"
+            fi
+          }
+          
+          export -f check_link
+          
+          # موازی‌سازی (حداکثر ۵ همزمان) برای سرعت بخشیدن
+          cat subscription_links_raw.txt | xargs -I {} -P 5 bash -c 'check_link "$@"' _ {}
+          
+          VALID_COUNT=$(wc -l < valid_subscription_links.txt)
+          echo "✅ Valid links found: $VALID_COUNT"
+
       - name: Add to job summary
         run: |
-          COUNT=$(cat subscription_links_found.txt | wc -l)
-          echo "## 🔍 Subscription links found: $COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "First 10 links:" >> $GITHUB_STEP_SUMMARY
-          head -10 subscription_links_found.txt >> $GITHUB_STEP_SUMMARY
+          echo "## 🔍 Subscription links validation result" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| مرحله | تعداد |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| کل لینک‌های یافت شده | `$(cat subscription_links_raw.txt | wc -l)` |" >> $GITHUB_STEP_SUMMARY
+          echo "| لینک‌های معتبر (دارای کانفیگ) | `$(cat valid_subscription_links.txt | wc -l)` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**نمونه لینک‌های معتبر:**" >> $GITHUB_STEP_SUMMARY
+          head -10 valid_subscription_links.txt >> $GITHUB_STEP_SUMMARY
 
-      - name: Commit and push results (if changed)
+      - name: Commit and push results
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          git add subscription_links_found.txt
-          git diff --staged --quiet || git commit -m "🔍 Update subscription links found $(date '+%Y-%m-%d %H:%M:%S')"
+          git add subscription_links_raw.txt valid_subscription_links.txt
+          git diff --staged --quiet || git commit -m "🔍 Update subscription links (validated) $(date '+%Y-%m-%d %H:%M:%S')"
           git push
