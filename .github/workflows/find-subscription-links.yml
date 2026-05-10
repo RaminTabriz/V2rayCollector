@@ -2,7 +2,7 @@ name: Find & Validate Subscription Links on GitHub
 
 on:
   schedule:
-    - cron: "0 */12 * * *"   # هر 12 ساعت (کاهش نرخ درخواست)
+    - cron: "0 */6 * * *"   # هر 6 ساعت
   workflow_dispatch:
 
 permissions:
@@ -22,46 +22,53 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            // الگوهای جستجوی بهبود یافته - دنبال محتوای حاوی لینک‌های کانفیگ
+            
+            // الگوهای جستجو (extension و محتوا)
             const queries = [
-              'vmess:// extension:txt',
-              'vless:// extension:txt',
-              'trojan:// extension:txt',
-              'ss:// extension:txt',
               'subscription extension:txt',
-              'v2ray config extension:txt',
-              'iran v2ray extension:txt',
-              'free v2ray extension:txt',
-              'sub link extension:txt',
-              'all_configs extension:txt'
+              'v2ray extension:txt',
+              'vmess extension:txt',
+              'vless extension:txt',
+              'trojan extension:txt',
+              'shadowsocks extension:txt',
+              'base64 extension:txt',
+              'subscription extension:json',
+              'config extension:yaml',
+              'sub extension:txt',
+              'iran extension:txt',
+              'mixed extension:txt'
             ];
+            
             let allUrls = new Set();
+            
             for (const q of queries) {
               let page = 1;
               let hasNext = true;
-              while (hasNext && page <= 3) { // محدودیت ۳ صفحه برای کاهش زمان
+              while (hasNext && page <= 5) {
                 try {
                   const result = await github.rest.search.code({
                     q: `${q} sort:updated-desc`,
-                    per_page: 50,
+                    per_page: 100,
                     page: page
                   });
+                  
                   for (const item of result.data.items) {
-                    // تلاش برای دریافت نام برنچ صحیح (با fallback)
                     let branch = item.repository.default_branch;
                     if (!branch) branch = 'main';
                     const rawUrl = `https://raw.githubusercontent.com/${item.repository.full_name}/${branch}/${item.path}`;
                     allUrls.add(rawUrl);
                   }
-                  hasNext = result.data.items.length === 50;
+                  
+                  hasNext = result.data.items.length === 100;
                   page++;
-                  await new Promise(r => setTimeout(r, 1000)); // تأخیر بیشتر برای احترام به rate limit
+                  await new Promise(r => setTimeout(r, 500));
                 } catch (err) {
-                  console.log(`Error query ${q} page ${page}: ${err.message}`);
+                  console.log(`Error with query ${q} page ${page}: ${err.message}`);
                   break;
                 }
               }
             }
+            
             const urlList = Array.from(allUrls);
             console.log(`Found ${urlList.length} unique raw URLs`);
             fs.writeFileSync('subscription_links_raw.txt', urlList.join('\n'));
@@ -71,6 +78,7 @@ jobs:
         run: |
           rm -f valid_subscription_links.txt
           touch valid_subscription_links.txt
+          
           check_link() {
             local url="$1"
             local status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$url" 2>/dev/null)
@@ -78,33 +86,31 @@ jobs:
               echo "❌ $url -> status $status"
               return 0
             fi
-            # دانلود 5KB اول محتوا (برای دیدن کانفیگ‌های طولانی‌تر)
             local content=$(curl -s --max-time 10 --range 0-5120 "$url" 2>/dev/null)
             if [[ -z "$content" ]]; then
-              echo "⚠️  $url -> empty content"
+              echo "⚠️ $url -> empty content"
               return 0
             fi
-            if echo "$content" | grep -qE '(vmess://|vless://|trojan://|ss://|ssr://|hysteria2://|hy2://|tuic://|wireguard://|tg://proxy|tg://socks|slipnet://|socks5?://|-----BEGIN ARGO)'; then
+            if echo "$content" | grep -qE '(vmess://|vless://|trojan://|ss://|ssr://|hysteria2://|hy2://|tuic://|wireguard://|tg://proxy|tg://socks|slipnet://|socks5?://|-----BEGIN ARGO VPN BRIDGE BLOCK-----)'; then
               echo "✅ $url -> valid"
               echo "$url" >> valid_subscription_links.txt
             else
-              echo "⚠️  $url -> no config pattern found"
+              echo "⚠️ $url -> no config pattern found"
             fi
             return 0
           }
+          
           export -f check_link
-          cat subscription_links_raw.txt | xargs -I {} -P 3 bash -c 'check_link "$@" || true' _ {}
-          echo "Valid links count: $(wc -l < valid_subscription_links.txt)"
+          cat subscription_links_raw.txt | xargs -I {} -P 5 bash -c 'check_link "$@" || true' _ {}
+          echo "✅ Valid links found: $(wc -l < valid_subscription_links.txt)"
 
       - name: If no valid links found, seed with known working sources
         run: |
           if [ ! -s valid_subscription_links.txt ]; then
             echo "No valid links found. Adding known working subscription sources as fallback."
-            cat > valid_subscription_links.txt << 'EOF'
-            https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt
-            https://raw.githubusercontent.com/wang1680/v2ray-configs/main/all_configs.txt
-            https://raw.githubusercontent.com/iranxray/hope/main/all_configs.txt
-            EOF
+            echo "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt" > valid_subscription_links.txt
+            echo "https://raw.githubusercontent.com/wang1680/v2ray-configs/main/all_configs.txt" >> valid_subscription_links.txt
+            echo "https://raw.githubusercontent.com/iranxray/hope/main/all_configs.txt" >> valid_subscription_links.txt
           fi
 
       - name: Add to job summary
