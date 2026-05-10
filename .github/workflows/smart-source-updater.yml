@@ -34,6 +34,7 @@ jobs:
 
       - name: Prepare environment
         run: |
+          sudo apt-get update && sudo apt-get install -y jq
           mkdir -p reports
           if [ ! -f Sources.json ]; then
             echo "[]" > Sources.json
@@ -42,7 +43,7 @@ jobs:
             echo '{"exclude_repos": [], "include_paths": ["", "main", "subscriptions", "sub", "Sub", "subs", "sing-box", "clash", "v2ray", "configs"], "exclude_patterns": ["test", "sample", "example", "demo"]}' > filters.json
           fi
 
-      # ========================= مرحله 1: ادغام لینک‌های معتبر از وورکفلو قبلی =========================
+      # ========================= مرحله 1: ادغام لینک‌های معتبر =========================
       - name: Check for valid links file
         id: check_valid
         run: |
@@ -56,25 +57,18 @@ jobs:
       - name: Merge valid links into Sources.json
         if: steps.check_valid.outputs.has_valid == 'true'
         run: |
-          # خواندن لینک‌های فعلی و معتبر
           jq -r '.[]' Sources.json | sort -u > current_sources.txt
           sed 's/^[[:space:]]*//;s/[[:space:]]*$//' valid_subscription_links.txt | sort -u > valid_sorted.txt
-          
-          # ادغام و یکتا سازی
           cat current_sources.txt valid_sorted.txt | sort -u > merged_sources.txt
-          
           ORIG_COUNT=$(wc -l < current_sources.txt)
           FINAL_COUNT=$(wc -l < merged_sources.txt)
           ADDED=$((FINAL_COUNT - ORIG_COUNT))
           echo "ADDED_COUNT=$ADDED" >> $GITHUB_ENV
-          
           if [ $ADDED -eq 0 ]; then
             echo "ℹ️ No new links from validation step."
           else
             echo "✅ Adding $ADDED new links from validation step."
           fi
-          
-          # ساخت JSON جدید
           jq -R . merged_sources.txt | jq -s . > Sources.json.tmp
           if jq empty Sources.json.tmp 2>/dev/null; then
             mv Sources.json.tmp Sources.json
@@ -83,7 +77,7 @@ jobs:
             exit 1
           fi
 
-      # ========================= مرحله 2: بازیابی کش مخازن اسکن شده =========================
+      # ========================= مرحله 2: بازیابی کش مخازن =========================
       - name: Restore scanned repos cache
         uses: actions/cache@v4
         id: cache-scanned
@@ -98,13 +92,12 @@ jobs:
           if [ ! -f scanned_repos.txt ]; then
             touch scanned_repos.txt
           fi
-          # اگر force_rescan فعال باشد، کش را نادیده می‌گیریم
           if [[ "${{ github.event.inputs.force_rescan }}" == "true" ]]; then
             echo "⚠️ Force re-scan enabled: clearing scanned repos cache."
             > scanned_repos.txt
           fi
 
-      # ========================= مرحله 3: اسکن مخازن (در صورت فعال بودن) =========================
+      # ========================= مرحله 3: اسکن مخازن =========================
       - name: Scan repositories for new subscription files
         if: github.event.inputs.enable_scan != 'false' || github.event_name == 'workflow_run'
         env:
@@ -116,84 +109,68 @@ jobs:
           > "$NEW_LINKS_FROM_SCAN"
           echo '{"scanned_repos": [], "errors": [], "new_links": []}' > "$SCAN_LOG"
           
-          # خواندن فیلترها
-          EXCLUDE_REPOS=$(jq -r '.exclude_repos[]' filters.json 2>/dev/null)
-          INCLUDE_PATHS=$(jq -r '.include_paths[]' filters.json 2>/dev/null)
-          EXCLUDE_PATTERNS=$(jq -r '.exclude_patterns[]' filters.json 2>/dev/null)
+          EXCLUDE_REPOS=$(jq -r '.exclude_repos[]' filters.json 2>/dev/null || echo "")
+          INCLUDE_PATHS=$(jq -r '.include_paths[]' filters.json 2>/dev/null || echo "")
+          EXCLUDE_PATTERNS=$(jq -r '.exclude_patterns[]' filters.json 2>/dev/null || echo "")
           
-          # خواندن لینک‌های فعلی
           jq -r '.[]' Sources.json > all_current_links.txt
           
-          # حلقه روی هر لینک (با استفاده از while در shell اصلی برای جلوگیری از subshell)
           while IFS= read -r url; do
-            # حذف فاصله‌ها
             url="${url#"${url%%[![:space:]]*}"}"
             url="${url%"${url##*[![:space:]]}"}"
             [ -z "$url" ] && continue
             
-            # استخراج owner/repo از raw.githubusercontent.com
             REPO_INFO=$(echo "$url" | sed -n 's|https://raw\.githubusercontent\.com/\([^/]*\)/\([^/]*\)/.*|\1 \2|p')
-            if [ -z "$REPO_INFO" ]; then
-              continue  # لینک غیر گیت‌هبی
-            fi
+            [ -z "$REPO_INFO" ] && continue
             
             OWNER=$(echo "$REPO_INFO" | cut -d' ' -f1)
             REPO=$(echo "$REPO_INFO" | cut -d' ' -f2)
             REPO_FULL="$OWNER/$REPO"
             
-            # بررسی blacklist
-            if echo "$EXCLUDE_REPOS" | grep -Fxq "$REPO_FULL"; then
+            if echo "$EXCLUDE_REPOS" | grep -Fxq "$REPO_FULL" 2>/dev/null; then
               echo "⏭️ Skipping blacklisted repo: $REPO_FULL"
               continue
             fi
             
-            # بررسی کش: آیا قبلاً این مخزن اسکن شده؟
-            if grep -Fxq "$REPO_FULL" scanned_repos.txt; then
-              echo "📦 Already scanned recently: $REPO_FULL (skipping)"
+            if grep -Fxq "$REPO_FULL" scanned_repos.txt 2>/dev/null; then
+              echo "📦 Already scanned: $REPO_FULL (skipping)"
               jq --arg repo "$REPO_FULL" '.scanned_repos += [{"repo": $repo, "status": "cached"}]' "$SCAN_LOG" > tmp.json && mv tmp.json "$SCAN_LOG"
               continue
             fi
             
             echo "📁 Scanning repo: $REPO_FULL"
-            SCAN_SUCCESS=false
             
-            # اسکن مسیرهای مشخص شده در include_paths
+            # اسکن مسیرها
             for dir_path in $INCLUDE_PATHS; do
               API_URL="https://api.github.com/repos/$OWNER/$REPO/contents/$dir_path"
-              # ارسال درخواست با توکن
               response=$(curl -s -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github.v3+json" "$API_URL")
               
-              # بررسی Rate Limit
               if echo "$response" | grep -q "API rate limit exceeded"; then
                 echo "❌ Rate limit exceeded! Stopping scan."
                 jq --arg err "Rate limit exceeded at repo $REPO_FULL" '.errors += [$err]' "$SCAN_LOG" > tmp.json && mv tmp.json "$SCAN_LOG"
-                break 2  # خروج از هر دو حلقه
+                break 2
               fi
               
-              # بررسی Not Found
               if echo "$response" | jq -e '.message == "Not Found"' > /dev/null 2>&1; then
                 continue
               fi
               
-              # استخراج فایل‌های .txt
-              files=$(echo "$response" | jq -r '.[] | select(.type == "file") | select(.name | endswith(".txt")) | .download_url' 2>/dev/null)
-              if [ -z "$files" ]; then
+              # استخراج فایل‌ها با حلقه جدا (رفع مشکل subshell)
+              echo "$response" | jq -r '.[] | select(.type == "file") | select(.name | endswith(".txt")) | .download_url' 2>/dev/null > /tmp/files_list.txt
+              if [ ! -s /tmp/files_list.txt ]; then
                 continue
               fi
               
-              # بررسی هر فایل
-              while IFS= read -r file_url; do
-                # فیلتر بر اساس الگوهای رد شده
-                skip=false
+              cat /tmp/files_list.txt | while IFS= read -r file_url; do
+                skip=0
                 for pattern in $EXCLUDE_PATTERNS; do
                   if echo "$file_url" | grep -qi "$pattern"; then
-                    skip=true
+                    skip=1
                     break
                   fi
                 done
-                [ "$skip" = true ] && continue
+                [ $skip -eq 1 ] && continue
                 
-                # اعتبارسنجی واقعی محتوا (چند خط اول)
                 if curl -sL --max-time 10 "$file_url" | head -c 2000 | grep -qE '(vmess|vless|trojan|ss://|ssr://|http://|https://|socks)'; then
                   if ! grep -Fxq "$file_url" all_current_links.txt; then
                     echo "$file_url" >> "$NEW_LINKS_FROM_SCAN"
@@ -201,31 +178,25 @@ jobs:
                     echo "  ✅ New valid subscription: $file_url"
                   fi
                 else
-                  echo "  ⚠️ Not a valid subscription: $file_url (content check failed)"
+                  echo "  ⚠️ Not valid: $file_url"
                 fi
-              done <<< "$files"
-              SCAN_SUCCESS=true
+              done
             done
             
-            # ثبت مخزن به عنوان اسکن شده (حتی اگر محتوایی پیدا نشد)
             echo "$REPO_FULL" >> scanned_repos.txt
             jq --arg repo "$REPO_FULL" --arg status "scanned" '.scanned_repos += [{"repo": $repo, "status": $status}]' "$SCAN_LOG" > tmp.json && mv tmp.json "$SCAN_LOG"
-            
-            # تاخیر 0.2 ثانیه برای جلوگیری از فشار بیش از حد
             sleep 0.2
           done < all_current_links.txt
           
-          # یکتا کردن لینک‌های جدید
           sort -u -o "$NEW_LINKS_FROM_SCAN" "$NEW_LINKS_FROM_SCAN" 2>/dev/null || true
           NEW_COUNT=$(wc -l < "$NEW_LINKS_FROM_SCAN" 2>/dev/null || echo "0")
           echo "NEW_LINKS_FROM_SCAN_COUNT=$NEW_COUNT" >> $GITHUB_ENV
           echo "SCAN_LOG=$SCAN_LOG" >> $GITHUB_ENV
           
           if [ "$NEW_COUNT" -eq 0 ]; then
-            echo "📭 No new subscription links discovered from repository scanning."
+            echo "📭 No new subscription links discovered."
           else
             echo "🎉 Found $NEW_COUNT new links!"
-            # اضافه کردن لینک‌های جدید به مجموعه فعلی
             cat "$NEW_LINKS_FROM_SCAN" >> all_current_links.txt
             sort -u all_current_links.txt -o all_current_links.txt
           fi
@@ -237,7 +208,7 @@ jobs:
             jq -R . all_current_links.txt | jq -s . > Sources.json.new
             if jq empty Sources.json.new 2>/dev/null; then
               mv Sources.json.new Sources.json
-              echo "✅ Sources.json updated with all links (validation + scan)."
+              echo "✅ Sources.json updated with all links."
             else
               echo "❌ Invalid JSON after scan merge"
               exit 1
@@ -246,7 +217,7 @@ jobs:
             echo "No links to update from scan."
           fi
 
-      # ========================= مرحله 5: تولید گزارش حرفه‌ای =========================
+      # ========================= مرحله 5: تولید گزارش =========================
       - name: Generate detailed report
         run: |
           RAW=$(cat subscription_links_raw.txt 2>/dev/null | wc -l | tr -d ' ')
@@ -256,17 +227,15 @@ jobs:
           TOTAL_ADDED=$((ADDED + SCAN_ADDED))
           DATE=$(date '+%Y-%m-%d %H:%M:%S')
           
-          # خواندن لاگ اسکن (JSON)
           SCAN_STATS="{}"
           if [ -f "$SCAN_LOG" ]; then
             SCAN_STATS=$(cat "$SCAN_LOG")
           fi
-          SCANNED_COUNT=$(echo "$SCAN_STATS" | jq '.scanned_repos | length')
-          ERROR_COUNT=$(echo "$SCAN_STATS" | jq '.errors | length')
+          SCANNED_COUNT=$(echo "$SCAN_STATS" | jq '.scanned_repos | length' 2>/dev/null || echo "0")
+          ERROR_COUNT=$(echo "$SCAN_STATS" | jq '.errors | length' 2>/dev/null || echo "0")
           NEW_LINKS_LIST=$(echo "$SCAN_STATS" | jq -r '.new_links[]' 2>/dev/null | head -20)
           
           mkdir -p reports
-          # گزارش Markdown
           {
             echo "# 📡 گزارش هوشمند به‌روزرسانی ساب‌لینک‌ها"
             echo ""
@@ -285,12 +254,11 @@ jobs:
             echo "| مخازن اسکن شده در این اجرا | $SCANNED_COUNT |"
             echo "| خطاهای API/محدودیت نرخ | $ERROR_COUNT |"
             echo ""
-            echo "## 🔗 لینک‌های جدید کشف شده از اسکن (نمایش حداکثر ۲۰ مورد)"
+            echo "## 🔗 لینک‌های جدید کشف شده (حداکثر ۲۰ مورد)"
             echo ""
             echo '```'
             echo "$NEW_LINKS_LIST"
             echo '```'
-            echo ""
             if [ $ERROR_COUNT -gt 0 ]; then
               echo "## ⚠️ خطاهای رخ داده"
               echo '```json'
@@ -298,10 +266,9 @@ jobs:
               echo '```'
             fi
             echo "---"
-            echo "✅ این گزارش به صورت خودکار توسط [Smart Source Updater](.github/workflows/smart-source-updater.yml) تولید شده است."
+            echo "✅ گزارش خودکار توسط Smart Source Updater"
           } > reports/subscription_update_report.md
           
-          # گزارش JSON برای استفاده بعدی
           {
             echo "{"
             echo "  \"date\": \"$DATE\","
@@ -316,7 +283,6 @@ jobs:
             echo "}"
           } > reports/scan_report.json
           
-          # نمایش خلاصه در Step Summary
           cat reports/subscription_update_report.md >> $GITHUB_STEP_SUMMARY
 
       - name: Upload reports as artifact
@@ -326,7 +292,7 @@ jobs:
           path: reports/
           retention-days: 30
 
-      # ========================= مرحله 6: Commit و Push (در صورت وجود تغییر) =========================
+      # ========================= مرحله 6: Commit و Push =========================
       - name: Commit and push changes
         run: |
           git config user.email "actions@github.com"
@@ -335,18 +301,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "📭 No changes to commit."
           else
-            git commit -m "🤖 Smart update: merged ${{ env.ADDED_COUNT || 0 }} + scanned ${{ env.NEW_LINKS_FROM_SCAN_COUNT || 0 }} new subscription links ($(date '+%Y-%m-%d %H:%M:%S'))"
+            git commit -m "🤖 Smart update: merged ${ADDED_COUNT:-0} + scanned ${NEW_LINKS_FROM_SCAN_COUNT:-0} new links ($(date '+%Y-%m-%d %H:%M:%S'))"
             git push
             echo "✅ Changes committed and pushed."
           fi
-
-      # ========================= مرحله 7: (اختیاری) ارسال نوتیفیکیشن =========================
-      - name: Notify (optional)
-        if: env.TOTAL_ADDED > 0 && github.event.inputs.enable_scan != 'false'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # در صورت تمایل می‌توانید یک Issue یا Discussion ایجاد کنید
-          echo "🔔 ${{ env.TOTAL_ADDED }} new subscription links added." >> $GITHUB_STEP_SUMMARY
-          # مثال ایجاد Issue (اختیاری)
-          # gh issue create --title "New subscription links found" --body "$(cat reports/subscription_update_report.md)" --label "auto-update"
