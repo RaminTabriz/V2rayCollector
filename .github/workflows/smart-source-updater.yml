@@ -362,6 +362,12 @@ jobs:
             echo "هیچ تغییری برای commit وجود ندارد."
           else
             git commit -m "به‌روزرسانی: +${ADDED_COUNT:-0} (ادغام), +${NEW_LINKS_FROM_SCAN_COUNT:-0} (اسکن), +${DISCOVERED_LINKS_COUNT:-0} (کشف), +${NEW_CHANNELS_COUNT:-0} (کانال)"
-            git push
+            echo "🔄 دریافت آخرین تغییرات remote..."
+            git pull --rebase origin main || {
+              echo "⚠️ خطا در rebase، تلاش با merge..."
+              git pull --no-rebase origin main
+            }
+            echo "📤 ارسال تغییرات به remote..."
+            git push origin main
             echo "✅ تغییرات با موفقیت commit و push شدند."
           fi
