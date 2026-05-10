@@ -1,0 +1,352 @@
+name: Smart Subscription Sources Updater
+
+on:
+  workflow_run:
+    workflows: ["Find & Validate Subscription Links on GitHub"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      enable_scan:
+        description: 'Scan repositories for new subscription links?'
+        type: boolean
+        default: true
+        required: false
+      force_rescan:
+        description: 'Force re-scan all repositories (ignore cache)?'
+        type: boolean
+        default: false
+        required: false
+
+concurrency:
+  group: update-sources
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  update-sources:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Prepare environment
+        run: |
+          mkdir -p reports
+          if [ ! -f Sources.json ]; then
+            echo "[]" > Sources.json
+          fi
+          if [ ! -f filters.json ]; then
+            echo '{"exclude_repos": [], "include_paths": ["", "main", "subscriptions", "sub", "Sub", "subs", "sing-box", "clash", "v2ray", "configs"], "exclude_patterns": ["test", "sample", "example", "demo"]}' > filters.json
+          fi
+
+      # ========================= مرحله 1: ادغام لینک‌های معتبر از وورکفلو قبلی =========================
+      - name: Check for valid links file
+        id: check_valid
+        run: |
+          if [ -s valid_subscription_links.txt ]; then
+            echo "has_valid=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_valid=false" >> $GITHUB_OUTPUT
+            echo "⚠️ No valid_subscription_links.txt found or empty."
+          fi
+
+      - name: Merge valid links into Sources.json
+        if: steps.check_valid.outputs.has_valid == 'true'
+        run: |
+          # خواندن لینک‌های فعلی و معتبر
+          jq -r '.[]' Sources.json | sort -u > current_sources.txt
+          sed 's/^[[:space:]]*//;s/[[:space:]]*$//' valid_subscription_links.txt | sort -u > valid_sorted.txt
+          
+          # ادغام و یکتا سازی
+          cat current_sources.txt valid_sorted.txt | sort -u > merged_sources.txt
+          
+          ORIG_COUNT=$(wc -l < current_sources.txt)
+          FINAL_COUNT=$(wc -l < merged_sources.txt)
+          ADDED=$((FINAL_COUNT - ORIG_COUNT))
+          echo "ADDED_COUNT=$ADDED" >> $GITHUB_ENV
+          
+          if [ $ADDED -eq 0 ]; then
+            echo "ℹ️ No new links from validation step."
+          else
+            echo "✅ Adding $ADDED new links from validation step."
+          fi
+          
+          # ساخت JSON جدید
+          jq -R . merged_sources.txt | jq -s . > Sources.json.tmp
+          if jq empty Sources.json.tmp 2>/dev/null; then
+            mv Sources.json.tmp Sources.json
+          else
+            echo "❌ Invalid JSON after merge"
+            exit 1
+          fi
+
+      # ========================= مرحله 2: بازیابی کش مخازن اسکن شده =========================
+      - name: Restore scanned repos cache
+        uses: actions/cache@v4
+        id: cache-scanned
+        with:
+          path: scanned_repos.txt
+          key: scanned-repos-${{ github.repository_id }}-${{ github.run_id }}
+          restore-keys: |
+            scanned-repos-${{ github.repository_id }}-
+
+      - name: Initialize scanned repos list
+        run: |
+          if [ ! -f scanned_repos.txt ]; then
+            touch scanned_repos.txt
+          fi
+          # اگر force_rescan فعال باشد، کش را نادیده می‌گیریم
+          if [[ "${{ github.event.inputs.force_rescan }}" == "true" ]]; then
+            echo "⚠️ Force re-scan enabled: clearing scanned repos cache."
+            > scanned_repos.txt
+          fi
+
+      # ========================= مرحله 3: اسکن مخازن (در صورت فعال بودن) =========================
+      - name: Scan repositories for new subscription files
+        if: github.event.inputs.enable_scan != 'false' || github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🔍 Starting repository scan from existing Sources.json links"
+          NEW_LINKS_FROM_SCAN="new_from_scan.txt"
+          SCAN_LOG="repos_scan_log.json"
+          > "$NEW_LINKS_FROM_SCAN"
+          echo '{"scanned_repos": [], "errors": [], "new_links": []}' > "$SCAN_LOG"
+          
+          # خواندن فیلترها
+          EXCLUDE_REPOS=$(jq -r '.exclude_repos[]' filters.json 2>/dev/null)
+          INCLUDE_PATHS=$(jq -r '.include_paths[]' filters.json 2>/dev/null)
+          EXCLUDE_PATTERNS=$(jq -r '.exclude_patterns[]' filters.json 2>/dev/null)
+          
+          # خواندن لینک‌های فعلی
+          jq -r '.[]' Sources.json > all_current_links.txt
+          
+          # حلقه روی هر لینک (با استفاده از while در shell اصلی برای جلوگیری از subshell)
+          while IFS= read -r url; do
+            # حذف فاصله‌ها
+            url="${url#"${url%%[![:space:]]*}"}"
+            url="${url%"${url##*[![:space:]]}"}"
+            [ -z "$url" ] && continue
+            
+            # استخراج owner/repo از raw.githubusercontent.com
+            REPO_INFO=$(echo "$url" | sed -n 's|https://raw\.githubusercontent\.com/\([^/]*\)/\([^/]*\)/.*|\1 \2|p')
+            if [ -z "$REPO_INFO" ]; then
+              continue  # لینک غیر گیت‌هبی
+            fi
+            
+            OWNER=$(echo "$REPO_INFO" | cut -d' ' -f1)
+            REPO=$(echo "$REPO_INFO" | cut -d' ' -f2)
+            REPO_FULL="$OWNER/$REPO"
+            
+            # بررسی blacklist
+            if echo "$EXCLUDE_REPOS" | grep -Fxq "$REPO_FULL"; then
+              echo "⏭️ Skipping blacklisted repo: $REPO_FULL"
+              continue
+            fi
+            
+            # بررسی کش: آیا قبلاً این مخزن اسکن شده؟
+            if grep -Fxq "$REPO_FULL" scanned_repos.txt; then
+              echo "📦 Already scanned recently: $REPO_FULL (skipping)"
+              jq --arg repo "$REPO_FULL" '.scanned_repos += [{"repo": $repo, "status": "cached"}]' "$SCAN_LOG" > tmp.json && mv tmp.json "$SCAN_LOG"
+              continue
+            fi
+            
+            echo "📁 Scanning repo: $REPO_FULL"
+            SCAN_SUCCESS=false
+            
+            # اسکن مسیرهای مشخص شده در include_paths
+            for dir_path in $INCLUDE_PATHS; do
+              API_URL="https://api.github.com/repos/$OWNER/$REPO/contents/$dir_path"
+              # ارسال درخواست با توکن
+              response=$(curl -s -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github.v3+json" "$API_URL")
+              
+              # بررسی Rate Limit
+              if echo "$response" | grep -q "API rate limit exceeded"; then
+                echo "❌ Rate limit exceeded! Stopping scan."
+                jq --arg err "Rate limit exceeded at repo $REPO_FULL" '.errors += [$err]' "$SCAN_LOG" > tmp.json && mv tmp.json "$SCAN_LOG"
+                break 2  # خروج از هر دو حلقه
+              fi
+              
+              # بررسی Not Found
+              if echo "$response" | jq -e '.message == "Not Found"' > /dev/null 2>&1; then
+                continue
+              fi
+              
+              # استخراج فایل‌های .txt
+              files=$(echo "$response" | jq -r '.[] | select(.type == "file") | select(.name | endswith(".txt")) | .download_url' 2>/dev/null)
+              if [ -z "$files" ]; then
+                continue
+              fi
+              
+              # بررسی هر فایل
+              while IFS= read -r file_url; do
+                # فیلتر بر اساس الگوهای رد شده
+                skip=false
+                for pattern in $EXCLUDE_PATTERNS; do
+                  if echo "$file_url" | grep -qi "$pattern"; then
+                    skip=true
+                    break
+                  fi
+                done
+                [ "$skip" = true ] && continue
+                
+                # اعتبارسنجی واقعی محتوا (چند خط اول)
+                if curl -sL --max-time 10 "$file_url" | head -c 2000 | grep -qE '(vmess|vless|trojan|ss://|ssr://|http://|https://|socks)'; then
+                  if ! grep -Fxq "$file_url" all_current_links.txt; then
+                    echo "$file_url" >> "$NEW_LINKS_FROM_SCAN"
+                    jq --arg link "$file_url" '.new_links += [$link]' "$SCAN_LOG" > tmp.json && mv tmp.json "$SCAN_LOG"
+                    echo "  ✅ New valid subscription: $file_url"
+                  fi
+                else
+                  echo "  ⚠️ Not a valid subscription: $file_url (content check failed)"
+                fi
+              done <<< "$files"
+              SCAN_SUCCESS=true
+            done
+            
+            # ثبت مخزن به عنوان اسکن شده (حتی اگر محتوایی پیدا نشد)
+            echo "$REPO_FULL" >> scanned_repos.txt
+            jq --arg repo "$REPO_FULL" --arg status "scanned" '.scanned_repos += [{"repo": $repo, "status": $status}]' "$SCAN_LOG" > tmp.json && mv tmp.json "$SCAN_LOG"
+            
+            # تاخیر 0.2 ثانیه برای جلوگیری از فشار بیش از حد
+            sleep 0.2
+          done < all_current_links.txt
+          
+          # یکتا کردن لینک‌های جدید
+          sort -u -o "$NEW_LINKS_FROM_SCAN" "$NEW_LINKS_FROM_SCAN" 2>/dev/null || true
+          NEW_COUNT=$(wc -l < "$NEW_LINKS_FROM_SCAN" 2>/dev/null || echo "0")
+          echo "NEW_LINKS_FROM_SCAN_COUNT=$NEW_COUNT" >> $GITHUB_ENV
+          echo "SCAN_LOG=$SCAN_LOG" >> $GITHUB_ENV
+          
+          if [ "$NEW_COUNT" -eq 0 ]; then
+            echo "📭 No new subscription links discovered from repository scanning."
+          else
+            echo "🎉 Found $NEW_COUNT new links!"
+            # اضافه کردن لینک‌های جدید به مجموعه فعلی
+            cat "$NEW_LINKS_FROM_SCAN" >> all_current_links.txt
+            sort -u all_current_links.txt -o all_current_links.txt
+          fi
+
+      # ========================= مرحله 4: بازسازی نهایی Sources.json =========================
+      - name: Final rebuild Sources.json with discovered links
+        run: |
+          if [ -s all_current_links.txt ]; then
+            jq -R . all_current_links.txt | jq -s . > Sources.json.new
+            if jq empty Sources.json.new 2>/dev/null; then
+              mv Sources.json.new Sources.json
+              echo "✅ Sources.json updated with all links (validation + scan)."
+            else
+              echo "❌ Invalid JSON after scan merge"
+              exit 1
+            fi
+          else
+            echo "No links to update from scan."
+          fi
+
+      # ========================= مرحله 5: تولید گزارش حرفه‌ای =========================
+      - name: Generate detailed report
+        run: |
+          RAW=$(cat subscription_links_raw.txt 2>/dev/null | wc -l | tr -d ' ')
+          VALID=$(cat valid_subscription_links.txt 2>/dev/null | wc -l | tr -d ' ')
+          ADDED=${ADDED_COUNT:-0}
+          SCAN_ADDED=${NEW_LINKS_FROM_SCAN_COUNT:-0}
+          TOTAL_ADDED=$((ADDED + SCAN_ADDED))
+          DATE=$(date '+%Y-%m-%d %H:%M:%S')
+          
+          # خواندن لاگ اسکن (JSON)
+          SCAN_STATS="{}"
+          if [ -f "$SCAN_LOG" ]; then
+            SCAN_STATS=$(cat "$SCAN_LOG")
+          fi
+          SCANNED_COUNT=$(echo "$SCAN_STATS" | jq '.scanned_repos | length')
+          ERROR_COUNT=$(echo "$SCAN_STATS" | jq '.errors | length')
+          NEW_LINKS_LIST=$(echo "$SCAN_STATS" | jq -r '.new_links[]' 2>/dev/null | head -20)
+          
+          mkdir -p reports
+          # گزارش Markdown
+          {
+            echo "# 📡 گزارش هوشمند به‌روزرسانی ساب‌لینک‌ها"
+            echo ""
+            echo "**تاریخ اجرا:** $DATE"
+            echo "**اسکن مخازن:** $([ "${{ github.event.inputs.enable_scan }}" != "false" ] && echo "فعال" || echo "غیرفعال")"
+            echo ""
+            echo "## 📊 خلاصه آماری"
+            echo ""
+            echo "| مرحله | تعداد |"
+            echo "|-------|-------|"
+            echo "| لینک‌های خام اولیه | ${RAW:-0} |"
+            echo "| لینک‌های معتبر (از اعتبارسنجی) | ${VALID:-0} |"
+            echo "| لینک‌های جدید اضافه شده از ادغام | $ADDED |"
+            echo "| **لینک‌های جدید کشف شده از اسکن** | **$SCAN_ADDED** |"
+            echo "| **جمع کل لینک‌های جدید** | **$TOTAL_ADDED** |"
+            echo "| مخازن اسکن شده در این اجرا | $SCANNED_COUNT |"
+            echo "| خطاهای API/محدودیت نرخ | $ERROR_COUNT |"
+            echo ""
+            echo "## 🔗 لینک‌های جدید کشف شده از اسکن (نمایش حداکثر ۲۰ مورد)"
+            echo ""
+            echo '```'
+            echo "$NEW_LINKS_LIST"
+            echo '```'
+            echo ""
+            if [ $ERROR_COUNT -gt 0 ]; then
+              echo "## ⚠️ خطاهای رخ داده"
+              echo '```json'
+              echo "$SCAN_STATS" | jq '.errors'
+              echo '```'
+            fi
+            echo "---"
+            echo "✅ این گزارش به صورت خودکار توسط [Smart Source Updater](.github/workflows/smart-source-updater.yml) تولید شده است."
+          } > reports/subscription_update_report.md
+          
+          # گزارش JSON برای استفاده بعدی
+          {
+            echo "{"
+            echo "  \"date\": \"$DATE\","
+            echo "  \"raw_links_count\": ${RAW:-0},"
+            echo "  \"valid_links_count\": ${VALID:-0},"
+            echo "  \"merged_new_count\": $ADDED,"
+            echo "  \"scanned_new_count\": $SCAN_ADDED,"
+            echo "  \"total_new_count\": $TOTAL_ADDED,"
+            echo "  \"scanned_repos_count\": $SCANNED_COUNT,"
+            echo "  \"errors_count\": $ERROR_COUNT,"
+            echo "  \"scan_details\": $SCAN_STATS"
+            echo "}"
+          } > reports/scan_report.json
+          
+          # نمایش خلاصه در Step Summary
+          cat reports/subscription_update_report.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload reports as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: subscription-update-reports
+          path: reports/
+          retention-days: 30
+
+      # ========================= مرحله 6: Commit و Push (در صورت وجود تغییر) =========================
+      - name: Commit and push changes
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions Bot"
+          git add Sources.json scanned_repos.txt reports/ new_from_scan.txt 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "📭 No changes to commit."
+          else
+            git commit -m "🤖 Smart update: merged ${{ env.ADDED_COUNT || 0 }} + scanned ${{ env.NEW_LINKS_FROM_SCAN_COUNT || 0 }} new subscription links ($(date '+%Y-%m-%d %H:%M:%S'))"
+            git push
+            echo "✅ Changes committed and pushed."
+          fi
+
+      # ========================= مرحله 7: (اختیاری) ارسال نوتیفیکیشن =========================
+      - name: Notify (optional)
+        if: env.TOTAL_ADDED > 0 && github.event.inputs.enable_scan != 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # در صورت تمایل می‌توانید یک Issue یا Discussion ایجاد کنید
+          echo "🔔 ${{ env.TOTAL_ADDED }} new subscription links added." >> $GITHUB_STEP_SUMMARY
+          # مثال ایجاد Issue (اختیاری)
+          # gh issue create --title "New subscription links found" --body "$(cat reports/subscription_update_report.md)" --label "auto-update"
