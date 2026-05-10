@@ -1,0 +1,93 @@
+name: Find Subscription Links on GitHub
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # هر 6 ساعت
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Search GitHub for subscription files
+        uses: actions/github-script@v7
+        id: search
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            
+            // الگوهای جستجو (extension و محتوا)
+            const queries = [
+              'subscription extension:txt',
+              'v2ray extension:txt',
+              'vmess extension:txt',
+              'vless extension:txt',
+              'trojan extension:txt',
+              'shadowsocks extension:txt',
+              'base64 extension:txt',
+              'subscription extension:json',
+              'config extension:yaml',
+              'sub extension:txt',
+              'iran extension:txt',
+              'mixed extension:txt'
+            ];
+            
+            let allUrls = new Set();
+            
+            for (const q of queries) {
+              let page = 1;
+              let hasNext = true;
+              while (hasNext && page <= 5) { // حداکثر 5 صفحه (500 نتیجه)
+                try {
+                  const result = await github.rest.search.code({
+                    q: `${q} sort:updated-desc`,
+                    per_page: 100,
+                    page: page
+                  });
+                  
+                  for (const item of result.data.items) {
+                    const rawUrl = `https://raw.githubusercontent.com/${item.repository.full_name}/${item.repository.default_branch}/${item.path}`;
+                    allUrls.add(rawUrl);
+                  }
+                  
+                  hasNext = result.data.items.length === 100;
+                  page++;
+                  // تاخیر برای جلوگیری از rate limit
+                  await new Promise(r => setTimeout(r, 500));
+                } catch (err) {
+                  console.log(`Error with query ${q} page ${page}: ${err.message}`);
+                  break;
+                }
+              }
+            }
+            
+            const urlList = Array.from(allUrls);
+            console.log(`Found ${urlList.length} unique raw URLs`);
+            
+            // ذخیره در فایل
+            fs.writeFileSync('subscription_links_found.txt', urlList.join('\n'));
+            
+            // بازگرداندن تعداد برای مرحله بعد
+            return urlList.length;
+            
+      - name: Add to job summary
+        run: |
+          COUNT=$(cat subscription_links_found.txt | wc -l)
+          echo "## 🔍 Subscription links found: $COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "First 10 links:" >> $GITHUB_STEP_SUMMARY
+          head -10 subscription_links_found.txt >> $GITHUB_STEP_SUMMARY
+
+      - name: Commit and push results (if changed)
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git add subscription_links_found.txt
+          git diff --staged --quiet || git commit -m "🔍 Update subscription links found $(date '+%Y-%m-%d %H:%M:%S')"
+          git push
