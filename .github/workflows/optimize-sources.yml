@@ -1,0 +1,45 @@
+name: Optimize Sources (Channels & Subscriptions)
+
+on:
+  schedule:
+    - cron: "0 0 * * 0"   # هر یکشنبه ساعت 00:00 UTC
+  workflow_dispatch:
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '>=1.21.3'
+
+      - name: Create directories
+        run: mkdir -p reports data
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run channel scanner (full scan including old)
+        run: |
+          go run ./cmd/channel-scanner -input channels.csv -output channels.csv -old-scan
+        continue-on-error: false
+
+      - name: Run sources checker
+        run: |
+          go run ./cmd/sources-checker Sources.json
+        continue-on-error: false
+
+      - name: Commit and push
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git add channels.csv Sources.json data/ reports/
+          git diff --staged --quiet || git commit -m "🧹 Weekly source optimization"
+          git pull --rebase --autostash origin main
+          git push origin main
