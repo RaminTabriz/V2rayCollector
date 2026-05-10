@@ -9,11 +9,12 @@ import (
     "strings"
 )
 
+// ComputeFingerprint محاسبه اثر انگشت یکتا برای کانفیگ بر اساس پروتکل
 func ComputeFingerprint(cfg, proto string) string {
     switch proto {
     case "vmess":
         return fingerprintVmess(cfg)
-    case "vless", "trojan", "ss", "ssr", "hysteria2", "tuic", "wireguard":
+    case "vless", "trojan", "ss", "ssr", "hysteria2", "tuic", "wireguard", "warp", "slipnet":
         return fingerprintCredentialURL(cfg)
     default:
         hash := md5.Sum([]byte(cfg))
@@ -21,6 +22,7 @@ func ComputeFingerprint(cfg, proto string) string {
     }
 }
 
+// fingerprintVmess استخراج فیلدهای کلیدی از JSON داخل vmess://
 func fingerprintVmess(vmessUrl string) string {
     parts := strings.SplitN(vmessUrl, "vmess://", 2)
     if len(parts) != 2 {
@@ -34,6 +36,7 @@ func fingerprintVmess(vmessUrl string) string {
     if err := json.Unmarshal(decoded, &data); err != nil {
         return ""
     }
+    // ترکیب فیلدهایی که هویت سرور را مشخص می‌کنند
     add := fmt.Sprintf("%s:%s:%s:%s:%s:%s:%s:%s:%s",
         getStr(data, "add"), getStr(data, "port"), getStr(data, "id"),
         getStr(data, "net"), getStr(data, "type"), getStr(data, "host"),
@@ -42,6 +45,7 @@ func fingerprintVmess(vmessUrl string) string {
     return fmt.Sprintf("%x", hash)
 }
 
+// fingerprintCredentialURL برای پروتکل‌های با فرمت URL استاندارد (user:pass@host:port)
 func fingerprintCredentialURL(cfg string) string {
     u, err := url.Parse(cfg)
     if err != nil {
@@ -58,6 +62,7 @@ func fingerprintCredentialURL(cfg string) string {
     return fmt.Sprintf("%x", hash)
 }
 
+// getStr کمک‌کننده برای استخراج string از map
 func getStr(data map[string]interface{}, key string) string {
     if val, ok := data[key]; ok && val != nil {
         return fmt.Sprintf("%v", val)
