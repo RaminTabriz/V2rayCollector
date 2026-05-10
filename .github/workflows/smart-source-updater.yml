@@ -48,14 +48,12 @@ jobs:
           if [ ! -f Sources.json ]; then echo "[]" > Sources.json; fi
           if [ ! -f channels.csv ]; then echo "# Telegram Channels" > channels.csv; fi
           if [ ! -f filters.json ]; then
-            cat > filters.json << 'EOF'
-          {
-            "exclude_repos": [],
-            "include_paths": ["", "main", "subscriptions", "sub", "Sub", "subs", "sing-box", "clash", "v2ray", "configs"],
-            "exclude_patterns": ["test", "sample", "example", "demo"],
-            "search_keywords": ["v2ray", "subscription", "config.txt", "vmess", "vless"]
-          }
-          EOF
+            printf '%s\n' '{' > filters.json
+            printf '  "exclude_repos": [],\n' >> filters.json
+            printf '  "include_paths": ["", "main", "subscriptions", "sub", "Sub", "subs", "sing-box", "clash", "v2ray", "configs"],\n' >> filters.json
+            printf '  "exclude_patterns": ["test", "sample", "example", "demo"],\n' >> filters.json
+            printf '  "search_keywords": ["v2ray", "subscription", "config.txt", "vmess", "vless"]\n' >> filters.json
+            printf '}\n' >> filters.json
           fi
 
       - name: بررسی وجود فایل معتبر
@@ -101,59 +99,72 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set +e
           echo "🔍 اسکن مخازن موجود در Sources.json..."
           NEW_LINKS_FROM_SCAN="new_from_scan.txt"
           > "$NEW_LINKS_FROM_SCAN"
+          
+          if ! jq -e '.' Sources.json >/dev/null 2>&1; then
+            echo "⚠️ Sources.json نامعتبر است، بازنویسی می‌شود."
+            echo "[]" > Sources.json
+          fi
           
           EXCLUDE_REPOS=$(jq -r '.exclude_repos[]' filters.json 2>/dev/null | tr '\n' '|')
           INCLUDE_PATHS=$(jq -r '.include_paths[]' filters.json 2>/dev/null)
           EXCLUDE_PATTERNS=$(jq -r '.exclude_patterns[]' filters.json 2>/dev/null | tr '\n' '|')
           
-          jq -r '.[]' Sources.json > all_current_links.txt
+          jq -r '.[]' Sources.json > all_current_links.txt 2>/dev/null
+          if [ ! -f all_current_links.txt ]; then
+            touch all_current_links.txt
+          fi
           
-          while IFS= read -r url; do
-            url="${url#"${url%%[![:space:]]*}"}"
-            url="${url%"${url##*[![:space:]]}"}"
-            [ -z "$url" ] && continue
-            
-            REPO_INFO=$(echo "$url" | sed -n 's|https://raw\.githubusercontent\.com/\([^/]*\)/\([^/]*\)/.*|\1 \2|p')
-            [ -z "$REPO_INFO" ] && continue
-            
-            OWNER=$(echo "$REPO_INFO" | cut -d' ' -f1)
-            REPO=$(echo "$REPO_INFO" | cut -d' ' -f2)
-            REPO_FULL="$OWNER/$REPO"
-            
-            if [ -n "$EXCLUDE_REPOS" ] && echo "$REPO_FULL" | grep -qE "$EXCLUDE_REPOS"; then continue; fi
-            if grep -Fxq "$REPO_FULL" scanned_repos.txt; then continue; fi
-            
-            echo "📁 در حال اسکن: $REPO_FULL"
-            
-            for dir_path in $INCLUDE_PATHS; do
-              API_URL="https://api.github.com/repos/$OWNER/$REPO/contents/$dir_path"
-              response=$(curl -s -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github.v3+json" "$API_URL")
+          if [ -s all_current_links.txt ]; then
+            while IFS= read -r url; do
+              url="${url#"${url%%[![:space:]]*}"}"
+              url="${url%"${url##*[![:space:]]}"}"
+              [ -z "$url" ] && continue
               
-              if echo "$response" | grep -q "API rate limit exceeded"; then
-                echo "❌ محدودیت نرخ API! توقف اسکن."
-                break 2
-              fi
-              if echo "$response" | jq -e '.message == "Not Found"' > /dev/null 2>&1; then continue; fi
+              REPO_INFO=$(echo "$url" | sed -n 's|https://raw\.githubusercontent\.com/\([^/]*\)/\([^/]*\)/.*|\1 \2|p')
+              [ -z "$REPO_INFO" ] && continue
               
-              echo "$response" | jq -r '.[] | select(.type=="file") | select(.name | endswith(".txt")) | .download_url' 2>/dev/null > /tmp/files.txt
-              if [ ! -s /tmp/files.txt ]; then continue; fi
+              OWNER=$(echo "$REPO_INFO" | cut -d' ' -f1)
+              REPO=$(echo "$REPO_INFO" | cut -d' ' -f2)
+              REPO_FULL="$OWNER/$REPO"
               
-              while IFS= read -r file_url; do
-                if [ -n "$EXCLUDE_PATTERNS" ] && echo "$file_url" | grep -qiE "$EXCLUDE_PATTERNS"; then continue; fi
-                if curl -sL --max-time 10 "$file_url" | head -c 2000 | grep -qE '(vmess|vless|trojan|ss://|ssr://)'; then
-                  if ! grep -Fxq "$file_url" all_current_links.txt; then
-                    echo "$file_url" >> "$NEW_LINKS_FROM_SCAN"
-                    echo "  ✅ ساب جدید: $file_url"
-                  fi
+              if [ -n "$EXCLUDE_REPOS" ] && echo "$REPO_FULL" | grep -qE "$EXCLUDE_REPOS"; then continue; fi
+              if grep -Fxq "$REPO_FULL" scanned_repos.txt; then continue; fi
+              
+              echo "📁 در حال اسکن: $REPO_FULL"
+              
+              for dir_path in $INCLUDE_PATHS; do
+                API_URL="https://api.github.com/repos/$OWNER/$REPO/contents/$dir_path"
+                response=$(curl -s -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github.v3+json" "$API_URL")
+                
+                if echo "$response" | grep -q "API rate limit exceeded"; then
+                  echo "❌ محدودیت نرخ API! توقف اسکن."
+                  break 2
                 fi
-              done < /tmp/files.txt
-            done
-            echo "$REPO_FULL" >> scanned_repos.txt
-            sleep 0.2
-          done < all_current_links.txt
+                if echo "$response" | jq -e '.message == "Not Found"' > /dev/null 2>&1; then continue; fi
+                
+                echo "$response" | jq -r '.[] | select(.type=="file") | select(.name | endswith(".txt")) | .download_url' 2>/dev/null > /tmp/files.txt
+                if [ ! -s /tmp/files.txt ]; then continue; fi
+                
+                while IFS= read -r file_url; do
+                  if [ -n "$EXCLUDE_PATTERNS" ] && echo "$file_url" | grep -qiE "$EXCLUDE_PATTERNS"; then continue; fi
+                  if curl -sL --max-time 10 "$file_url" | head -c 2000 | grep -qE '(vmess|vless|trojan|ss://|ssr://)'; then
+                    if ! grep -Fxq "$file_url" all_current_links.txt; then
+                      echo "$file_url" >> "$NEW_LINKS_FROM_SCAN"
+                      echo "  ✅ ساب جدید: $file_url"
+                    fi
+                  fi
+                done < /tmp/files.txt
+              done
+              echo "$REPO_FULL" >> scanned_repos.txt
+              sleep 0.2
+            done < all_current_links.txt
+          else
+            echo "ℹ️ هیچ مخزنی در Sources.json یافت نشد."
+          fi
           
           sort -u -o "$NEW_LINKS_FROM_SCAN" "$NEW_LINKS_FROM_SCAN" 2>/dev/null
           NEW_COUNT=$(wc -l < "$NEW_LINKS_FROM_SCAN" 2>/dev/null || echo "0")
@@ -163,6 +174,7 @@ jobs:
             sort -u all_current_links.txt -o all_current_links.txt
           fi
           echo "✅ اسکن مخازن موجود پایان یافت. $NEW_COUNT ساب جدید پیدا شد."
+          set -e
 
       - name: جستجوی مخازن جدید با GitHub Search
         if: github.event.inputs.enable_discovery == 'true'
@@ -210,7 +222,6 @@ jobs:
           INCLUDE_PATHS=$(jq -r '.include_paths[]' filters.json 2>/dev/null)
           EXCLUDE_PATTERNS=$(jq -r '.exclude_patterns[]' filters.json 2>/dev/null | tr '\n' '|')
           
-          # تضمین وجود فایل all_current_links.txt
           touch all_current_links.txt
           cp all_current_links.txt all_current_links_backup.txt
           
