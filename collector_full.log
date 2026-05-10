@@ -1,0 +1,12 @@
+# github.com/RaminTabriz/V2rayCollector/internal/report
+internal/report/stats.go:19:9: declared and not used: newCount
+internal/report/stats.go:19:19: declared and not used: dupCount
+internal/report/stats.go:19:29: declared and not used: insecureCount
+# github.com/RaminTabriz/V2rayCollector/internal/output
+internal/output/archive.go:5:5: "io" imported and not used
+internal/output/archive.go:110:34: undefined: strings
+internal/output/writer.go:145:9: declared and not used: cfg
+# github.com/RaminTabriz/V2rayCollector/internal/source
+internal/source/subscription.go:91:17: undefined: http
+internal/source/telegram.go:111:17: undefined: http
+internal/source/github_fork.go:8:5: "strings" imported and not used
