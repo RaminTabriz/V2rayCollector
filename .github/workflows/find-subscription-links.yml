@@ -41,14 +41,14 @@ jobs:
             
             let allUrls = new Set();
             let page = 1;
-            const maxPages = 8; // کمتر از 10 برای جلوگیری از rate limit
+            const maxPages = 8;
             
             for (const q of queries) {
               page = 1;
               let hasNext = true;
               while (hasNext && page <= maxPages) {
                 try {
-                  await new Promise(r => setTimeout(r, 500)); // تاخیر ساده
+                  await new Promise(r => setTimeout(r, 500));
                   const result = await github.rest.search.code({
                     q: `${q} sort:updated-desc`,
                     per_page: 100,
@@ -97,7 +97,6 @@ jobs:
               return 0
             fi
             
-            # استفاده از wc -c به جای stat
             local file_size=$(wc -c < "$tmp_file" 2>/dev/null || echo "0")
             if [ "$file_size" -lt 500 ]; then
               echo "⚠️ tiny file ($file_size bytes) $url"
@@ -119,7 +118,8 @@ jobs:
           export -f validate_link
           export PROTOCOLS
           
-          cat subscription_links_raw.txt | xargs -I {} -P 3 bash -c 'validate_link "$@" || true' _ {}
+          # اصلاح: استفاده از -d '\n' برای جلوگیری از مشکل نقل قول
+          cat subscription_links_raw.txt | xargs -d '\n' -I {} -P 3 bash -c 'validate_link "$@" || true' _ {}
           
           sort -u valid_subscription_links.txt -o valid_subscription_links.txt
           sed -i '/^[[:space:]]*$/d' valid_subscription_links.txt
