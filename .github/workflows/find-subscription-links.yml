@@ -2,7 +2,7 @@ name: Find & Validate Subscription Links on GitHub
 
 on:
   schedule:
-    - cron: "0 */6 * * *"   # هر 6 ساعت
+    - cron: "0 */6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Search GitHub for subscription files
         uses: actions/github-script@v7
@@ -35,16 +35,28 @@ jobs:
               'config extension:yaml',
               'sub extension:txt',
               'iran extension:txt',
-              'mixed extension:txt'
+              'mixed extension:txt',
+              'clash extension:yaml',
+              'sing-box extension:json'
             ];
             
             let allUrls = new Set();
+            let page = 1;
+            const maxPages = 10; // افزایش صفحات به 10
+            let rateLimitRemaining = 5000;
             
             for (const q of queries) {
-              let page = 1;
+              page = 1;
               let hasNext = true;
-              while (hasNext && page <= 5) {
+              while (hasNext && page <= maxPages) {
                 try {
+                  // بررسی rate limit قبل از درخواست
+                  const rate = await github.rest.rateLimit.get();
+                  if (rate.data.resources.search.remaining < 10) {
+                    console.log(`Rate limit low (${rate.data.resources.search.remaining}), waiting 60s...`);
+                    await new Promise(r => setTimeout(r, 60000));
+                  }
+                  
                   const result = await github.rest.search.code({
                     q: `${q} sort:updated-desc`,
                     per_page: 100,
@@ -60,8 +72,13 @@ jobs:
                   
                   hasNext = result.data.items.length === 100;
                   page++;
-                  await new Promise(r => setTimeout(r, 500));
+                  await new Promise(r => setTimeout(r, 300)); // تاخیر کمتر
                 } catch (err) {
+                  if (err.status === 403 && err.message.includes('rate limit')) {
+                    console.log('Rate limit hit, waiting 60 seconds...');
+                    await new Promise(r => setTimeout(r, 60000));
+                    continue;
+                  }
                   console.log(`Error with query ${q} page ${page}: ${err.message}`);
                   break;
                 }
@@ -69,66 +86,123 @@ jobs:
             }
             
             const urlList = Array.from(allUrls);
-            console.log(`Found ${urlList.length} unique raw URLs`);
-            fs.writeFileSync('subscription_links_raw.txt', urlList.join('\n'));
-            return urlList.length;
+            // حذف فاصله‌ها و خطوط خالی هنگام ذخیره
+            const cleanedUrls = urlList.map(u => u.trim()).filter(u => u.length > 0);
+            fs.writeFileSync('subscription_links_raw.txt', cleanedUrls.join('\n'));
+            console.log(`Found ${cleanedUrls.length} unique raw URLs`);
+            return cleanedUrls.length;
 
-      - name: Validate each link (status + config presence)
+      - name: Validate each link (deep content check)
         run: |
           rm -f valid_subscription_links.txt
           touch valid_subscription_links.txt
           
-          check_link() {
+          # لیست پروتکل‌های معتبر (با regex کامل)
+          PROTOCOLS='(vmess://|vless://|trojan://|ss://|ssr://|hysteria2://|hy2://|tuic://|wireguard://|tg://proxy|tg://socks|socks5?://|-----BEGIN ARGO VPN BRIDGE BLOCK-----)'
+          
+          validate_link() {
             local url="$1"
-            local status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$url" 2>/dev/null)
-            if [[ "$status" != "200" ]]; then
-              echo "❌ $url -> status $status"
+            # حذف whitespace ابتدا و انتها
+            url=$(echo "$url" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            [ -z "$url" ] && return 0
+            
+            # دریافت status و محتوای اولیه (حداکثر 2 مگابایت)
+            local tmp_file=$(mktemp)
+            local http_code=$(curl -s -o "$tmp_file" -w "%{http_code}" --max-time 15 --connect-timeout 10 "$url" 2>/dev/null)
+            
+            if [[ "$http_code" != "200" ]]; then
+              echo "❌ $http_code $url"
+              rm -f "$tmp_file"
               return 0
             fi
-            local content=$(curl -s --max-time 10 --range 0-5120 "$url" 2>/dev/null)
-            if [[ -z "$content" ]]; then
-              echo "⚠️ $url -> empty content"
+            
+            # بررسی حجم فایل (بیش از 500 بایت باشد تا محتوای خالی نباشد)
+            local file_size=$(stat -c%s "$tmp_file" 2>/dev/null || echo "0")
+            if [ "$file_size" -lt 500 ]; then
+              echo "⚠️ tiny file ($file_size bytes) $url"
+              rm -f "$tmp_file"
               return 0
             fi
-            if echo "$content" | grep -qE '(vmess://|vless://|trojan://|ss://|ssr://|hysteria2://|hy2://|tuic://|wireguard://|tg://proxy|tg://socks|slipnet://|socks5?://|-----BEGIN ARGO VPN BRIDGE BLOCK-----)'; then
-              echo "✅ $url -> valid"
+            
+            # جستجوی الگوهای پروتکل در کل فایل (با head -c 2M برای سرعت)
+            if head -c 2M "$tmp_file" | grep -qE "$PROTOCOLS"; then
+              echo "✅ $url"
               echo "$url" >> valid_subscription_links.txt
             else
-              echo "⚠️ $url -> no config pattern found"
+              echo "⚠️ no config in $url"
             fi
+            
+            rm -f "$tmp_file"
             return 0
           }
           
-          export -f check_link
-          # اجرای موازی با حداکثر ۵ همزمان (در صورت خطا ادامه بده)
-          cat subscription_links_raw.txt | xargs -I {} -P 5 bash -c 'check_link "$@" || true' _ {}
-          echo "✅ Valid links found: $(wc -l < valid_subscription_links.txt)"
-
-      - name: If no valid links found, seed with known working sources
-        run: |
-          if [ ! -s valid_subscription_links.txt ]; then
-            echo "No valid links found. Adding known working subscription sources as fallback."
-            echo "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt" > valid_subscription_links.txt
-            echo "https://raw.githubusercontent.com/wang1680/v2ray-configs/main/all_configs.txt" >> valid_subscription_links.txt
-            echo "https://raw.githubusercontent.com/iranxray/hope/main/all_configs.txt" >> valid_subscription_links.txt
+          export -f validate_link
+          export PROTOCOLS
+          
+          # اجرای موازی با حداکثر 3 همزمان (کمتر از قبل برای پایداری)
+          cat subscription_links_raw.txt | xargs -I {} -P 3 bash -c 'validate_link "$@" || true' _ {}
+          
+          # حذف خطوط تکراری و خالی در فایل معتبر
+          sort -u valid_subscription_links.txt -o valid_subscription_links.txt
+          sed -i '/^[[:space:]]*$/d' valid_subscription_links.txt
+          
+          VALID_COUNT=$(wc -l < valid_subscription_links.txt)
+          echo "✅ Valid links found: $VALID_COUNT"
+          
+          # اگر هیچ لینک معتبری پیدا نشد، از فال بک استفاده کن
+          if [ "$VALID_COUNT" -eq 0 ]; then
+            echo "⚠️ No valid links found. Adding known working sources as fallback."
+            cat > valid_subscription_links.txt << 'EOF'
+          https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt
+          https://raw.githubusercontent.com/wang1680/v2ray-configs/main/all_configs.txt
+          https://raw.githubusercontent.com/iranxray/hope/main/all_configs.txt
+          https://raw.githubusercontent.com/freefq/free/main/v2ray
+          https://raw.githubusercontent.com/ssrsub/ssr/master/ssr-sub
+          EOF
+            # دوباره sort کن
+            sort -u -o valid_subscription_links.txt valid_subscription_links.txt
           fi
 
-      - name: Add to job summary
+      - name: Generate validation report
         run: |
-          echo "## 🔍 Subscription links validation result" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| مرحله | تعداد |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| کل لینک‌های یافت شده | `$(cat subscription_links_raw.txt | wc -l)` |" >> $GITHUB_STEP_SUMMARY
-          echo "| لینک‌های معتبر (دارای کانفیگ) | `$(cat valid_subscription_links.txt | wc -l)` |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**نمونه لینک‌های معتبر:**" >> $GITHUB_STEP_SUMMARY
-          head -10 valid_subscription_links.txt >> $GITHUB_STEP_SUMMARY
+          RAW_COUNT=$(cat subscription_links_raw.txt 2>/dev/null | wc -l | tr -d ' ')
+          VALID_COUNT=$(cat valid_subscription_links.txt 2>/dev/null | wc -l | tr -d ' ')
+          DATE=$(date '+%Y-%m-%d %H:%M:%S')
+          
+          mkdir -p reports
+          {
+            echo "# 🔍 گزارش اعتبارسنجی لینک‌های اشتراک"
+            echo ""
+            echo "**تاریخ اجرا:** $DATE"
+            echo ""
+            echo "## 📊 خلاصه"
+            echo ""
+            echo "| مرحله | تعداد |"
+            echo "|-------|-------|"
+            echo "| لینک‌های خام یافت شده | $RAW_COUNT |"
+            echo "| لینک‌های معتبر (دارای کانفیگ) | $VALID_COUNT |"
+            echo ""
+            echo "## 🔗 نمونه لینک‌های معتبر (حداکثر ۱۰ مورد)"
+            echo ""
+            echo '```'
+            head -10 valid_subscription_links.txt
+            echo '```'
+            echo ""
+            echo "---"
+            echo "✅ این گزارش به صورت خودکار تولید شده است."
+          } > reports/validation_report.md
+          
+          cat reports/validation_report.md >> $GITHUB_STEP_SUMMARY
 
       - name: Commit and push results
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          git add subscription_links_raw.txt valid_subscription_links.txt
-          git diff --staged --quiet || git commit -m "🔍 Update subscription links (validated) $(date '+%Y-%m-%d %H:%M:%S')"
-          git push
+          git add subscription_links_raw.txt valid_subscription_links.txt reports/validation_report.md
+          if git diff --staged --quiet; then
+            echo "📭 No changes to commit."
+          else
+            git commit -m "🔍 Update subscription links (validated) $(date '+%Y-%m-%d %H:%M:%S')"
+            git push
+            echo "✅ Results committed."
+          fi
