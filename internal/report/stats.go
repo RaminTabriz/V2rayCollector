@@ -11,12 +11,11 @@ import (
     "github.com/RaminTabriz/V2rayCollector/internal/parser"
 )
 
-// GenerateStats تولید گزارش آماری در فایل reports/collector_stats.md
 func GenerateStats(c *cache.Cache) {
     entries := c.GetAll()
 
     totalConfigs := len(entries)
-    var newCount, dupCount, insecureCount, telegramCount, subCount int
+    var telegramCount, subCount int
     protoCounts := make(map[string]int)
     channelStats := make(map[string]int)
 
@@ -31,9 +30,6 @@ func GenerateStats(c *cache.Cache) {
         }
         protoCounts[e.Protocol]++
     }
-
-    // آمار جدید، تکراری و ناامن در این اجرا قابل محاسبه نیست مگر اینکه در کش ذخیره شده باشند
-    // برای سادگی از کش استفاده می‌کنیم (در حال حاضر فقط آمار کش را نشان می‌دهیم)
 
     var sb strings.Builder
     sb.WriteString("# 📊 گزارش آماری جمع‌آوری‌کننده کانفیگ\n\n")
@@ -91,6 +87,5 @@ func GenerateStats(c *cache.Cache) {
     sb.WriteString("---\n✅ گزارش توسط V2rayCollector تولید شده است.\n")
     os.MkdirAll("reports", 0755)
     os.WriteFile("reports/collector_stats.md", []byte(sb.String()), 0644)
-    // همچنین یک نسخه متنی ساده
     os.WriteFile("reports/collector_stats.txt", []byte(sb.String()), 0644)
 }
