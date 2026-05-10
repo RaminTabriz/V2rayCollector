@@ -1,217 +1,221 @@
-name: Find & Validate Subscription Links on GitHub
+name: Update Sources.json from Valid Links
 
 on:
-  schedule:
-    - cron: "0 */6 * * *"
+  workflow_run:
+    workflows: ["Find & Validate Subscription Links on GitHub"]
+    types:
+      - completed
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  search:
+  update-sources:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Create processed URLs file if not exists
+      - name: Prepare environment
         run: |
-          touch processed_urls.txt
+          mkdir -p reports
+          if [ ! -f Sources.json ]; then
+            echo "[]" > Sources.json
+          fi
+          sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Search GitHub for subscription files (skip processed URLs)
-        uses: actions/github-script@v7
-        id: search
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            
-            // خواندن URLهای قبلاً پردازش شده
-            let processedSet = new Set();
-            if (fs.existsSync('processed_urls.txt')) {
-              const content = fs.readFileSync('processed_urls.txt', 'utf8');
-              content.split(/\r?\n/).forEach(line => {
-                line = line.trim();
-                if (line) processedSet.add(line);
-              });
-            }
-            console.log(`Loaded ${processedSet.size} previously processed URLs (will skip them).`);
-            
-            const queries = [
-              'subscription extension:txt',
-              'v2ray extension:txt',
-              'vmess extension:txt',
-              'vless extension:txt',
-              'trojan extension:txt',
-              'shadowsocks extension:txt',
-              'base64 extension:txt',
-              'subscription extension:json',
-              'config extension:yaml',
-              'sub extension:txt',
-              'iran extension:txt',
-              'mixed extension:txt',
-              'clash extension:yaml',
-              'sing-box extension:json'
-            ];
-            
-            let newUrls = new Set(); // فقط URLهای جدید (که قبلاً پردازش نشده)
-            
-            for (const q of queries) {
-              let page = 1;
-              let hasNext = true;
-              const maxPages = 8;
-              while (hasNext && page <= maxPages) {
-                try {
-                  await new Promise(r => setTimeout(r, 500));
-                  const result = await github.rest.search.code({
-                    q: `${q} sort:updated-desc`,
-                    per_page: 100,
-                    page: page
-                  });
-                  
-                  for (const item of result.data.items) {
-                    let branch = item.repository.default_branch;
-                    if (!branch) branch = 'main';
-                    const rawUrl = `https://raw.githubusercontent.com/${item.repository.full_name}/${branch}/${item.path}`.trim();
-                    // فقط اضافه کن اگر قبلاً پردازش نشده باشد
-                    if (!processedSet.has(rawUrl)) {
-                      newUrls.add(rawUrl);
-                    }
-                  }
-                  
-                  hasNext = result.data.items.length === 100;
-                  page++;
-                } catch (err) {
-                  console.log(`Error with query ${q} page ${page}: ${err.message}`);
-                  break;
-                }
-              }
-            }
-            
-            const newUrlList = Array.from(newUrls);
-            console.log(`Found ${newUrlList.length} NEW unique raw URLs (previously processed: ${processedSet.size})`);
-            fs.writeFileSync('subscription_links_raw.txt', newUrlList.join('\n'));
-            return newUrlList.length;
-
-      - name: Validate each new link (deep content check)
+      - name: Check if valid links file exists
+        id: check_valid
         run: |
-          rm -f valid_subscription_links.txt
-          touch valid_subscription_links.txt
-          
-          PROTOCOLS='(vmess://|vless://|trojan://|ss://|ssr://|hysteria2://|hy2://|tuic://|wireguard://|tg://proxy|tg://socks|socks5?://|-----BEGIN ARGO VPN BRIDGE BLOCK-----)'
-          
-          validate_link() {
-            local url="$1"
-            url=$(echo "$url" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            [ -z "$url" ] && return 0
-            
-            local tmp_file=$(mktemp)
-            local http_code=$(curl -s -o "$tmp_file" -w "%{http_code}" --max-time 15 --connect-timeout 10 "$url" 2>/dev/null)
-            
-            if [[ "$http_code" != "200" ]]; then
-              echo "❌ $http_code $url"
-              rm -f "$tmp_file"
-              return 0
-            fi
-            
-            local file_size=$(wc -c < "$tmp_file" 2>/dev/null || echo "0")
-            if [ "$file_size" -lt 500 ]; then
-              echo "⚠️ tiny file ($file_size bytes) $url"
-              rm -f "$tmp_file"
-              return 0
-            fi
-            
-            if head --bytes=2M "$tmp_file" 2>/dev/null | grep -qE "$PROTOCOLS"; then
-              echo "✅ $url"
-              echo "$url" >> valid_subscription_links.txt
-            else
-              echo "⚠️ no config in $url"
-            fi
-            
-            rm -f "$tmp_file"
-            return 0
-          }
-          
-          export -f validate_link
-          export PROTOCOLS
-          
-          # فقط URLهای جدید (subscription_links_raw.txt) را بررسی کن
-          if [ -s subscription_links_raw.txt ]; then
-            cat subscription_links_raw.txt | xargs -d '\n' -I {} -P 3 bash -c 'validate_link "$@" || true' _ {}
+          if [ -s valid_subscription_links.txt ]; then
+            echo "has_valid=true" >> $GITHUB_OUTPUT
           else
-            echo "No new URLs to validate."
-          fi
-          
-          sort -u valid_subscription_links.txt -o valid_subscription_links.txt
-          sed -i '/^[[:space:]]*$/d' valid_subscription_links.txt
-          
-          VALID_COUNT=$(wc -l < valid_subscription_links.txt)
-          echo "✅ Valid new links found: $VALID_COUNT"
-          
-          # اگر هیچ لینک جدید معتبری یافت نشد، فال بک اضافه کن (اما فقط اگر فال بک قبلاً پردازش نشده باشد)
-          if [ "$VALID_COUNT" -eq 0 ] && [ ! -s valid_subscription_links.txt ]; then
-            echo "⚠️ No valid new links found. Adding known working sources as fallback (only if not already processed)."
-            # فال بک‌ها را فقط اگر در processed_urls.txt نباشند اضافه کن (بعداً در مرحله به‌روزرسانی کش انجام می‌شود)
-            # فعلاً یک فایل موقت برای فال بک ایجاد می‌کنیم
-            cat > fallback_links.txt << 'EOF'
-          https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt
-          https://raw.githubusercontent.com/wang1680/v2ray-configs/main/all_configs.txt
-          https://raw.githubusercontent.com/iranxray/hope/main/all_configs.txt
-          https://raw.githubusercontent.com/freefq/free/main/v2ray
-          https://raw.githubusercontent.com/ssrsub/ssr/master/ssr-sub
-          EOF
-            # این فال بک‌ها را در valid_subscription_links.txt می‌ریزیم، اما بعداً در مرحله کش، URLهای تکراری حذف می‌شوند
-            cat fallback_links.txt >> valid_subscription_links.txt
-            sort -u -o valid_subscription_links.txt valid_subscription_links.txt
+            echo "has_valid=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Update processed URLs cache (add all new raw URLs, even invalid)
+      # ======================== مرحله 1: ادغام لینک‌های معتبر جدید ========================
+      - name: Merge valid links into Sources.json
+        id: merge
+        if: steps.check_valid.outputs.has_valid == 'true'
         run: |
-          # جمع‌آوری همه URLهای جدید (هم معتبر و هم نامعتبر) که در این اجرا بررسی شدند
-          cat subscription_links_raw.txt >> processed_urls.txt
-          # همچنین لینک‌هایی که در valid_subscription_links.txt هستند را هم اضافه کن (احتیاط)
-          cat valid_subscription_links.txt >> processed_urls.txt
-          # یکتا سازی فایل processed_urls.txt
-          sort -u -o processed_urls.txt processed_urls.txt
-          echo "✅ Updated processed URLs cache. Total unique processed URLs: $(wc -l < processed_urls.txt)"
+          jq -r '.[]' Sources.json | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sort -u > current_sources.txt
+          sed 's/^[[:space:]]*//;s/[[:space:]]*$//' valid_subscription_links.txt | sort -u > valid_sorted.txt
+          cat current_sources.txt valid_sorted.txt | sort -u > merged_sources.txt
+          
+          ORIG_COUNT=$(cat current_sources.txt | wc -l)
+          FINAL_COUNT=$(cat merged_sources.txt | wc -l)
+          ADDED=$((FINAL_COUNT - ORIG_COUNT))
+          echo "ADDED_COUNT=$ADDED" >> $GITHUB_ENV
+          
+          if [ $ADDED -eq 0 ]; then
+            echo "⚠️ No new links from valid_subscription_links.txt"
+          else
+            echo "✅ Adding $ADDED new links from validation step"
+          fi
+          
+          # بازسازی Sources.json موقت
+          echo "[" > Sources.json.tmp
+          while IFS= read -r line; do
+            escaped=$(printf "%s" "$line" | sed 's/["\\]/\\&/g')
+            echo "  \"$escaped\"," >> Sources.json.tmp
+          done < merged_sources.txt
+          sed -i '$ s/,$//' Sources.json.tmp
+          echo "]" >> Sources.json.tmp
+          
+          if jq empty Sources.json.tmp 2>/dev/null; then
+            mv Sources.json.tmp Sources.json
+          else
+            echo "❌ Invalid JSON after merge"
+            exit 1
+          fi
 
-      - name: Generate validation report
+      # ======================== مرحله 2: اسکن مخازن گیت‌هاب از روی لینک‌های موجود ========================
+      - name: Scan GitHub repositories from Sources.json for more subscription files
+        id: scan_repos
         run: |
-          RAW_COUNT=$(cat subscription_links_raw.txt 2>/dev/null | wc -l | tr -d ' ')
-          VALID_COUNT=$(cat valid_subscription_links.txt 2>/dev/null | wc -l | tr -d ' ')
+          echo "🔍 Starting repository scan from existing Sources.json links"
+          
+          # نصب jq قبلاً انجام شده
+          # فایل کمکی برای لینک‌های جدید یافت شده از اسکن
+          NEW_LINKS_FROM_SCAN="new_from_scan.txt"
+          touch "$NEW_LINKS_FROM_SCAN"
+          
+          # خواندن تمام لینک‌های فعلی Sources.json (یکتا)
+          jq -r '.[]' Sources.json > all_current_links.txt
+          
+          # حلقه روی هر لینک
+          while IFS= read -r url; do
+            # حذف فاصله‌ها
+            url=$(echo "$url" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            [ -z "$url" ] && continue
+            
+            # بررسی آیا این لینک یک GitHub raw URL است
+            REPO_INFO=$(echo "$url" | sed -n 's|https://raw\.githubusercontent\.com/\([^/]*\)/\([^/]*\)/.*|\1 \2|p')
+            if [ -z "$REPO_INFO" ]; then
+              continue  # لینک غیر گیت‌هبی را نادیده بگیر
+            fi
+            
+            OWNER=$(echo "$REPO_INFO" | cut -d' ' -f1)
+            REPO=$(echo "$REPO_INFO" | cut -d' ' -f2)
+            echo "📁 Scanning repo: $OWNER/$REPO (from $url)"
+            
+            # لیست مسیرهایی که ممکن است شامل فایل‌های اشتراک باشند
+            for dir_path in "" "main" "subscriptions" "v2ray-configs" "configs" "sub" "Sub" "subs" "sing-box" "clash"; do
+              API_URL="https://api.github.com/repos/$OWNER/$REPO/contents/$dir_path"
+              response=$(curl -s -H "Accept: application/vnd.github.v3+json" "$API_URL")
+              
+              # بررسی خطا یا عدم وجود دایرکتوری
+              if echo "$response" | jq -e '.message == "Not Found"' > /dev/null 2>&1; then
+                continue
+              fi
+              
+              # استخراج فایل‌های .txt
+              files=$(echo "$response" | jq -r '.[] | select(.type == "file") | select(.name | endswith(".txt")) | .download_url' 2>/dev/null)
+              if [ -z "$files" ]; then
+                continue
+              fi
+              
+              # فیلتر کردن لینک‌هایی که قبلاً در Sources.json وجود ندارند
+              echo "$files" | while read -r file_url; do
+                if ! grep -Fxq "$file_url" all_current_links.txt; then
+                  echo "$file_url" >> "$NEW_LINKS_FROM_SCAN"
+                  echo "  ✅ Found new: $file_url"
+                fi
+              done
+            done
+            
+            # تاخیر ساده برای جلوگیری از rate limit
+            sleep 1
+          done < all_current_links.txt
+          
+          # یکتا کردن لینک‌های جدید
+          sort -u -o "$NEW_LINKS_FROM_SCAN" "$NEW_LINKS_FROM_SCAN" 2>/dev/null || true
+          NEW_COUNT=$(wc -l < "$NEW_LINKS_FROM_SCAN" 2>/dev/null || echo "0")
+          echo "NEW_LINKS_FROM_SCAN_COUNT=$NEW_COUNT" >> $GITHUB_ENV
+          
+          if [ "$NEW_COUNT" -eq 0 ]; then
+            echo "📭 No new links discovered from repository scanning."
+          else
+            echo "🎉 Found $NEW_COUNT new links from scanning repositories."
+            # اضافه کردن لینک‌های جدید به فایل موقت برای ادغام نهایی
+            cat "$NEW_LINKS_FROM_SCAN" >> all_current_links.txt
+            sort -u all_current_links.txt -o all_current_links.txt
+          fi
+
+      # ======================== مرحله 3: بازسازی نهایی Sources.json با لینک‌های اسکن شده ========================
+      - name: Final rebuild Sources.json with discovered links
+        run: |
+          if [ -s all_current_links.txt ]; then
+            echo "[" > Sources.json.new
+            while IFS= read -r line; do
+              escaped=$(printf "%s" "$line" | sed 's/["\\]/\\&/g')
+              echo "  \"$escaped\"," >> Sources.json.new
+            done < all_current_links.txt
+            sed -i '$ s/,$//' Sources.json.new
+            echo "]" >> Sources.json.new
+            
+            # اعتبارسنجی و جایگزینی
+            if jq empty Sources.json.new 2>/dev/null; then
+              mv Sources.json.new Sources.json
+              echo "✅ Sources.json updated with newly scanned subscription links."
+            else
+              echo "❌ Invalid JSON after scan"
+              exit 1
+            fi
+          else
+            echo "No links to update."
+          fi
+
+      # ======================== مرحله 4: تولید گزارش ========================
+      - name: Generate detailed report
+        run: |
+          RAW=$(cat subscription_links_raw.txt 2>/dev/null | wc -l | tr -d ' ')
+          VALID=$(cat valid_subscription_links.txt 2>/dev/null | wc -l | tr -d ' ')
+          ADDED=${ADDED_COUNT:-0}
+          SCAN_ADDED=${NEW_LINKS_FROM_SCAN_COUNT:-0}
+          TOTAL_ADDED=$((ADDED + SCAN_ADDED))
           DATE=$(date '+%Y-%m-%d %H:%M:%S')
           
           mkdir -p reports
           {
-            echo "# 🔍 گزارش اعتبارسنجی لینک‌های اشتراک"
+            echo "# 📡 گزارش به‌روزرسانی ساب‌لینک‌ها"
             echo ""
             echo "**تاریخ اجرا:** $DATE"
             echo ""
-            echo "## 📊 خلاصه"
+            echo "## 📊 خلاصه آماری"
             echo ""
             echo "| مرحله | تعداد |"
             echo "|-------|-------|"
-            echo "| لینک‌های جدید یافت شده (قبلاً دیده نشده) | $RAW_COUNT |"
-            echo "| لینک‌های معتبر جدید (دارای کانفیگ) | $VALID_COUNT |"
-            echo "| کل لینک‌های پردازش شده در کل تاریخ | $(wc -l < processed_urls.txt) |"
+            echo "| لینک‌های خام اولیه (از جستجو) | ${RAW:-0} |"
+            echo "| لینک‌های معتبر (از اعتبارسنجی) | ${VALID:-0} |"
+            echo "| لینک‌های جدید اضافه شده از ادغام مستقیم | $ADDED |"
+            echo "| **لینک‌های جدید کشف شده از اسکن مخازن** | **$SCAN_ADDED** |"
+            echo "| **جمع لینک‌های جدید اضافه شده** | **$TOTAL_ADDED** |"
             echo ""
-            echo "## 🔗 نمونه لینک‌های معتبر جدید (حداکثر ۱۰ مورد)"
+            echo "## 🔗 نمونه لینک‌های کشف شده از اسکن مخازن (حداکثر ۱۰ مورد)"
             echo ""
             echo '```'
-            head -10 valid_subscription_links.txt
+            head -10 new_from_scan.txt 2>/dev/null
             echo '```'
             echo ""
             echo "---"
-            echo "✅ لینک‌های تکراری قبلاً دیده شده دیگر جستجو نمی‌شوند."
-          } > reports/validation_report.md
+            echo "✅ اسکن مخازن به صورت خودکار از روی لینک‌های موجود در Sources.json انجام شد."
+          } > reports/subscription_update_report.md
           
-          cat reports/validation_report.md >> $GITHUB_STEP_SUMMARY
+          cat reports/subscription_update_report.md >> $GITHUB_STEP_SUMMARY
 
-      - name: Commit and push results (including cache)
+      # ======================== مرحله 5: Commit و Push ========================
+      - name: Commit and push changes
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          git add subscription_links_raw.txt valid_subscription_links.txt processed_urls.txt reports/validation_report.md
-          git diff --staged --quiet || git commit -m "🔍 Update subscription links (new only) + cache $(date '+%Y-%m-%d %H:%M:%S')"
-          git push
+          git add Sources.json reports/subscription_update_report.md
+          git add new_from_scan.txt 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "📭 No changes to commit."
+          else
+            git commit -m "📡 Update Sources.json with new valid links + repo scan ($(date '+%Y-%m-%d %H:%M:%S'))"
+            git push
+            echo "✅ Changes committed and pushed."
+          fi
