@@ -4,9 +4,7 @@ go 1.25.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.12.0
-	github.com/jszwec/csvutil v1.10.0
 	github.com/projectdiscovery/gologger v1.1.68
-	golang.org/x/time v0.15.0
 )
 
 require (
@@ -30,7 +28,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/nwaples/rardecode/v2 v2.2.2 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
-	github.com/projectdiscovery/utils v0.10.1 // indirect
+	github.com/projectdiscovery/utils v0.11.0 // indirect
 	github.com/sorairolake/lzip-go v0.3.8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
