@@ -1,4 +1,4 @@
-name: Smart Subscription Sources Updater
+name: Simple Updater
 
 on:
   workflow_run:
