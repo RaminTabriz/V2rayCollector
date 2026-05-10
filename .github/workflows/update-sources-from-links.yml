@@ -1,0 +1,67 @@
+name: Update Sources.json from Valid Links
+
+on:
+  workflow_run:
+    workflows: ["Find & Validate Subscription Links on GitHub"]
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-sources:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read valid links and merge into Sources.json
+        run: |
+          # اگر فایل معتبر وجود نداشت، خارج شو
+          if [ ! -s valid_subscription_links.txt ]; then
+            echo "⚠️ No valid_subscription_links.txt found or empty. Exiting."
+            exit 0
+          fi
+
+          # اطمینان از وجود Sources.json (در صورت نبود، یک آرایه خالی ایجاد کن)
+          if [ ! -f Sources.json ]; then
+            echo "[]" > Sources.json
+          fi
+
+          # استخراج لینک‌های فعلی از Sources.json
+          jq -r '.[]' Sources.json > current_sources.txt 2>/dev/null || true
+
+          # فایل موقت برای لینک‌های جدید
+          > new_links.txt
+
+          # بررسی هر لینک معتبر: اگر در Sources.json نبود و هنوز کار می‌کند، اضافه کن
+          while IFS= read -r url; do
+            if ! grep -qxF "$url" current_sources.txt; then
+              echo "➕ Adding new link: $url"
+              echo "$url" >> new_links.txt
+            else
+              echo "⏩ Already exists: $url"
+            fi
+          done < valid_subscription_links.txt
+
+          NEW_COUNT=$(wc -l < new_links.txt)
+          if [ "$NEW_COUNT" -eq 0 ]; then
+            echo "✅ No new links to add."
+            exit 0
+          fi
+
+          # تبدیل لینک‌های جدید به فرمت JSON و ادغام با فایل موجود
+          jq --argfile new <(jq -R -s -c 'split("\n") | map(select(. != ""))' new_links.txt) '. += $new | unique' Sources.json > Sources.json.tmp
+          mv Sources.json.tmp Sources.json
+
+          echo "✅ Added $NEW_COUNT new links to Sources.json"
+
+      - name: Commit and push changes
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git add Sources.json
+          git diff --staged --quiet || git commit -m "📡 Update Sources.json with new valid subscription links"
+          git push
