@@ -42,25 +42,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: نصب jq
-        uses: actions/setup-jq@v1
-        with:
-          jq-version: '1.7'
-
       - name: آماده‌سازی دایرکتوری‌ها و فایل‌های اولیه
         run: |
+          # jq در ubuntu-latest وجود دارد، نیازی به نصب نیست
           mkdir -p reports
           if [ ! -f Sources.json ]; then echo "[]" > Sources.json; fi
           if [ ! -f channels.csv ]; then echo "# Telegram Channels" > channels.csv; fi
           if [ ! -f filters.json ]; then
             cat > filters.json << 'EOF'
-          {
-            "exclude_repos": [],
-            "include_paths": ["", "main", "subscriptions", "sub", "Sub", "subs", "sing-box", "clash", "v2ray", "configs"],
-            "exclude_patterns": ["test", "sample", "example", "demo"],
-            "search_keywords": ["v2ray", "subscription", "config.txt", "vmess", "vless"]
-          }
-          EOF
+{
+  "exclude_repos": [],
+  "include_paths": ["", "main", "subscriptions", "sub", "Sub", "subs", "sing-box", "clash", "v2ray", "configs"],
+  "exclude_patterns": ["test", "sample", "example", "demo"],
+  "search_keywords": ["v2ray", "subscription", "config.txt", "vmess", "vless"]
+}
+EOF
           fi
 
       - name: بررسی وجود فایل معتبر
@@ -215,6 +211,8 @@ jobs:
           INCLUDE_PATHS=$(jq -r '.include_paths[]' filters.json 2>/dev/null)
           EXCLUDE_PATTERNS=$(jq -r '.exclude_patterns[]' filters.json 2>/dev/null | tr '\n' '|')
           
+          # تضمین وجود فایل all_current_links.txt
+          touch all_current_links.txt
           cp all_current_links.txt all_current_links_backup.txt
           
           while IFS= read -r repo_full; do
