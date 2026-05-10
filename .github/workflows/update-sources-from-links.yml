@@ -34,66 +34,60 @@ jobs:
             echo "⚠️ No valid_subscription_links.txt found or empty. Skipping update."
           fi
 
-      - name: Merge valid links into Sources.json (no jq, simple method)
+      - name: Merge valid links into Sources.json (pure bash)
         id: merge
         if: steps.check_valid.outputs.has_valid == 'true'
         run: |
-          # استخراج لینک‌های فعلی از Sources.json (با حذف براکت‌ها و کاماها)
-          cat Sources.json | sed 's/[][]//g' | tr ',' '\n' | sed 's/"//g' | sed 's/^ *//;s/ *$//' | grep -v '^$' > current_sources.txt 2>/dev/null || true
-          
-          # اضافه کردن لینک‌های معتبر به فایل موقت
+          cat Sources.json | tr -d '[],"' | tr ',' '\n' | sed '/^[[:space:]]*$/d' > current_sources.txt
           cat valid_subscription_links.txt >> current_sources.txt
-          
-          # مرتب‌سازی و حذف تکراری‌ها
           sort -u current_sources.txt > merged_sources.txt
           
-          # شمارش تعداد لینک‌های جدید
-          # (تفاوت بین merged_sources.txt و Sources.json اصلی)
-          ORIGINAL_COUNT=$(cat current_sources.txt | sort | uniq | wc -l)
+          ORIGINAL_COUNT=$(cat Sources.json | tr -d '[],"' | tr ',' '\n' | sed '/^[[:space:]]*$/d' | sort -u | wc -l)
           FINAL_COUNT=$(cat merged_sources.txt | wc -l)
           ADDED=$((FINAL_COUNT - ORIGINAL_COUNT))
           echo "ADDED_COUNT=$ADDED" >> $GITHUB_ENV
           
-          # ساخت فایل JSON جدید
           echo "[" > Sources.json.new
-          cat merged_sources.txt | while read -r line; do
+          while IFS= read -r line; do
             echo "  \"$line\"," >> Sources.json.new
-          done
-          # حذف کاما آخرین خط و بستن آرایه
+          done < merged_sources.txt
           sed -i '$ s/,$//' Sources.json.new
           echo "]" >> Sources.json.new
-          
           mv Sources.json.new Sources.json
           echo "✅ Added $ADDED new links to Sources.json"
 
       - name: Generate detailed report
         run: |
-          RAW_COUNT=$(cat subscription_links_raw.txt 2>/dev/null | wc -l | tr -d ' ')
-          FOUND_COUNT=$(cat subscription_links_found.txt 2>/dev/null | wc -l | tr -d ' ')
-          VALID_COUNT=$(cat valid_subscription_links.txt 2>/dev/null | wc -l | tr -d ' ')
-          ADDED_COUNT=${ADDED_COUNT:-0}
+          RAW=$(cat subscription_links_raw.txt 2>/dev/null | wc -l | tr -d ' ')
+          FOUND=$(cat subscription_links_found.txt 2>/dev/null | wc -l | tr -d ' ')
+          VALID=$(cat valid_subscription_links.txt 2>/dev/null | wc -l | tr -d ' ')
+          ADDED=${ADDED_COUNT:-0}
+          RAW=${RAW:-0}; FOUND=${FOUND:-0}; VALID=${VALID:-0}
+          DATE=$(date '+%Y-%m-%d %H:%M:%S')
           
-          RAW_COUNT=${RAW_COUNT:-0}
-          FOUND_COUNT=${FOUND_COUNT:-0}
-          VALID_COUNT=${VALID_COUNT:-0}
-          
-          rm -f reports/subscription_update_report.md
-          
-          printf '# 📡 گزارش به‌روزرسانی ساب‌لینک‌ها\n\n' >> reports/subscription_update_report.md
-          printf '**تاریخ اجرا:** `%s`\n\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> reports/subscription_update_report.md
-          printf '## 📊 خلاصه آماری\n\n' >> reports/subscription_update_report.md
-          printf '| مرحله | تعداد |\n' >> reports/subscription_update_report.md
-          printf '|-------|-------|\n' >> reports/subscription_update_report.md
-          printf '| لینک‌های خام اولیه (subscription_links_raw.txt) | %d |\n' "$RAW_COUNT" >> reports/subscription_update_report.md
-          printf '| لینک‌های یافت شده توسط جستجو (subscription_links_found.txt) | %d |\n' "$FOUND_COUNT" >> reports/subscription_update_report.md
-          printf '| لینک‌های معتبر دارای کانفیگ (valid_subscription_links.txt) | %d |\n' "$VALID_COUNT" >> reports/subscription_update_report.md
-          printf '| **لینک‌های جدید اضافه شده به Sources.json** | **%d** |\n' "$ADDED_COUNT" >> reports/subscription_update_report.md
-          printf '\n' >> reports/subscription_update_report.md
-          printf '## 🔗 نمونه لینک‌های معتبر (حداکثر ۱۰ مورد)\n\n' >> reports/subscription_update_report.md
-          printf '```\n' >> reports/subscription_update_report.md
-          head -10 valid_subscription_links.txt 2>/dev/null || printf '(فایل موجود نیست یا خالی است)\n' >> reports/subscription_update_report.md
-          printf '```\n\n' >> reports/subscription_update_report.md
-          printf '---\n✅ این گزارش به صورت خودکار تولید شده است.\n' >> reports/subscription_update_report.md
+          {
+            echo "# 📡 گزارش به‌روزرسانی ساب‌لینک‌ها"
+            echo ""
+            echo "**تاریخ اجرا:** $DATE"
+            echo ""
+            echo "## 📊 خلاصه آماری"
+            echo ""
+            echo "| مرحله | تعداد |"
+            echo "|-------|-------|"
+            echo "| لینک‌های خام اولیه (subscription_links_raw.txt) | $RAW |"
+            echo "| لینک‌های یافت شده توسط جستجو (subscription_links_found.txt) | $FOUND |"
+            echo "| لینک‌های معتبر دارای کانفیگ (valid_subscription_links.txt) | $VALID |"
+            echo "| **لینک‌های جدید اضافه شده به Sources.json** | **$ADDED** |"
+            echo ""
+            echo "## 🔗 نمونه لینک‌های معتبر (حداکثر ۱۰ مورد)"
+            echo ""
+            echo '```'
+            head -10 valid_subscription_links.txt 2>/dev/null
+            echo '```'
+            echo ""
+            echo "---"
+            echo "✅ این گزارش به صورت خودکار تولید شده است."
+          } > reports/subscription_update_report.md
           
           cat reports/subscription_update_report.md >> $GITHUB_STEP_SUMMARY
 
