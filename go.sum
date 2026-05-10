@@ -1,0 +1,12 @@
+github.com/PuerkitoBio/goquery v1.8.1 h1:uQ+hNfrVUoJ8hGrJMaYYdzr7Cb4UE/PcrMqSxBvBqWM=
+github.com/PuerkitoBio/goquery v1.8.1/go.mod h1:Q8ICL1kNUJ2sXGoAhPGUdYDJvgQgHzJsnnd3H7Ho5jQ=
+github.com/andybalholm/cascadia v1.3.1 h1:nhxRkql1kdYCc8Snf7D5/D3spOX+dBgjA6u8x004T2c=
+github.com/andybalholm/cascadia v1.3.1/go.mod h1:R4bJ1UQfqADjvDa4P6HZHLh/3OxWWEqc0Sk8XGwHqvA=
+github.com/jszwec/csvutil v1.8.0 h1:W8H2CO6UtsciTfH/fFzULC+W6c+p9qUXAM0/aRTKJbA=
+github.com/jszwec/csvutil v1.8.0/go.mod h1:j/JQ6ZcZvXHzWfffGYoOO+7Fj2zUc+uZxHhYvV/UUqQ=
+github.com/projectdiscovery/gologger v1.1.11 h1:8iGzHvM9S6tECFXaF/AzCMP7E63M59VWJfDvZEWHMc0=
+github.com/projectdiscovery/gologger v1.1.11/go.mod h1:OiOlWNoZHL5Ml1tNknxkxNbn8KGX9sWwGwNTSkZHyfE=
+golang.org/x/net v0.7.0 h1:rJrUqqhjsgNp7KqAIc25s9pZnjU7TUcSY7HcVZjdn1g=
+golang.org/x/net v0.7.0/go.mod h1:2Tu9+aMcznHK/AK1HMvgo6xiTLG5rD5rZLDS+rp2Bjs=
+golang.org/x/time v0.3.0 h1:rg5rLMjNzMS1RkNLzCG38eapWhnYLFYXDXj2gOlr8j4=
+golang.org/x/time v0.3.0/go.mod h1:tRJNPiyCQ0inRvYxbN9jk5I+vvW/OXSQhTDSoE431IQ=
