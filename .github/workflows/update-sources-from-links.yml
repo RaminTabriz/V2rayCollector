@@ -57,7 +57,10 @@ jobs:
           echo "ADDED_COUNT=$ADDED" >> $GITHUB_OUTPUT
           
           if [ "$ADDED" -gt 0 ]; then
-            jq --argfile new <(jq -R -s -c 'split("\n") | map(select(. != ""))' new_links.txt) '. += $new | unique' Sources.json > Sources.json.tmp
+            # تبدیل new_links.txt به JSON array
+            jq -R -s -c 'split("\n") | map(select(. != ""))' new_links.txt > new_links.json
+            # ادغام Sources.json با new_links.json (با حذف تکراری‌ها)
+            jq -s '.[0] + .[1] | unique' Sources.json new_links.json > Sources.json.tmp
             mv Sources.json.tmp Sources.json
             echo "✅ Added $ADDED new links to Sources.json"
           else
@@ -71,15 +74,12 @@ jobs:
           VALID_COUNT=$(cat valid_subscription_links.txt 2>/dev/null | wc -l | tr -d ' ' || echo 0)
           ADDED_COUNT=${ADDED_COUNT:-0}
           
-          # اطمینان از عددی بودن مقادیر
           RAW_COUNT=${RAW_COUNT:-0}
           FOUND_COUNT=${FOUND_COUNT:-0}
           VALID_COUNT=${VALID_COUNT:-0}
           
-          # حذف فایل قبلی
           rm -f reports/subscription_update_report.md
           
-          # ساخت گزارش با printf (بدون هیچ heredoc)
           printf '# 📡 گزارش به‌روزرسانی ساب‌لینک‌ها\n\n' >> reports/subscription_update_report.md
           printf '**تاریخ اجرا:** `%s`\n\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> reports/subscription_update_report.md
           printf '## 📊 خلاصه آماری\n\n' >> reports/subscription_update_report.md
@@ -96,7 +96,6 @@ jobs:
           printf '```\n\n' >> reports/subscription_update_report.md
           printf '---\n✅ این گزارش به صورت خودکار تولید شده است.\n' >> reports/subscription_update_report.md
           
-          # اضافه کردن به job summary
           cat reports/subscription_update_report.md >> $GITHUB_STEP_SUMMARY
 
       - name: Commit and push changes
