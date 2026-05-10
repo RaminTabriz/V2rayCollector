@@ -15,13 +15,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Search GitHub for subscription files
+      - name: Create processed URLs file if not exists
+        run: |
+          touch processed_urls.txt
+
+      - name: Search GitHub for subscription files (skip processed URLs)
         uses: actions/github-script@v7
         id: search
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
+            
+            // خواندن URLهای قبلاً پردازش شده
+            let processedSet = new Set();
+            if (fs.existsSync('processed_urls.txt')) {
+              const content = fs.readFileSync('processed_urls.txt', 'utf8');
+              content.split(/\r?\n/).forEach(line => {
+                line = line.trim();
+                if (line) processedSet.add(line);
+              });
+            }
+            console.log(`Loaded ${processedSet.size} previously processed URLs (will skip them).`);
+            
             const queries = [
               'subscription extension:txt',
               'v2ray extension:txt',
@@ -39,13 +55,12 @@ jobs:
               'sing-box extension:json'
             ];
             
-            let allUrls = new Set();
-            let page = 1;
-            const maxPages = 8;
+            let newUrls = new Set(); // فقط URLهای جدید (که قبلاً پردازش نشده)
             
             for (const q of queries) {
-              page = 1;
+              let page = 1;
               let hasNext = true;
+              const maxPages = 8;
               while (hasNext && page <= maxPages) {
                 try {
                   await new Promise(r => setTimeout(r, 500));
@@ -58,8 +73,11 @@ jobs:
                   for (const item of result.data.items) {
                     let branch = item.repository.default_branch;
                     if (!branch) branch = 'main';
-                    const rawUrl = `https://raw.githubusercontent.com/${item.repository.full_name}/${branch}/${item.path}`;
-                    allUrls.add(rawUrl);
+                    const rawUrl = `https://raw.githubusercontent.com/${item.repository.full_name}/${branch}/${item.path}`.trim();
+                    // فقط اضافه کن اگر قبلاً پردازش نشده باشد
+                    if (!processedSet.has(rawUrl)) {
+                      newUrls.add(rawUrl);
+                    }
                   }
                   
                   hasNext = result.data.items.length === 100;
@@ -71,12 +89,12 @@ jobs:
               }
             }
             
-            const urlList = Array.from(allUrls).map(u => u.trim()).filter(u => u.length > 0);
-            fs.writeFileSync('subscription_links_raw.txt', urlList.join('\n'));
-            console.log(`Found ${urlList.length} unique raw URLs`);
-            return urlList.length;
+            const newUrlList = Array.from(newUrls);
+            console.log(`Found ${newUrlList.length} NEW unique raw URLs (previously processed: ${processedSet.size})`);
+            fs.writeFileSync('subscription_links_raw.txt', newUrlList.join('\n'));
+            return newUrlList.length;
 
-      - name: Validate each link (deep content check)
+      - name: Validate each new link (deep content check)
         run: |
           rm -f valid_subscription_links.txt
           touch valid_subscription_links.txt
@@ -118,26 +136,45 @@ jobs:
           export -f validate_link
           export PROTOCOLS
           
-          # اصلاح: استفاده از -d '\n' برای جلوگیری از مشکل نقل قول
-          cat subscription_links_raw.txt | xargs -d '\n' -I {} -P 3 bash -c 'validate_link "$@" || true' _ {}
+          # فقط URLهای جدید (subscription_links_raw.txt) را بررسی کن
+          if [ -s subscription_links_raw.txt ]; then
+            cat subscription_links_raw.txt | xargs -d '\n' -I {} -P 3 bash -c 'validate_link "$@" || true' _ {}
+          else
+            echo "No new URLs to validate."
+          fi
           
           sort -u valid_subscription_links.txt -o valid_subscription_links.txt
           sed -i '/^[[:space:]]*$/d' valid_subscription_links.txt
           
           VALID_COUNT=$(wc -l < valid_subscription_links.txt)
-          echo "✅ Valid links found: $VALID_COUNT"
+          echo "✅ Valid new links found: $VALID_COUNT"
           
-          if [ "$VALID_COUNT" -eq 0 ]; then
-            echo "⚠️ No valid links found. Adding known working sources as fallback."
-            cat > valid_subscription_links.txt << 'EOF'
+          # اگر هیچ لینک جدید معتبری یافت نشد، فال بک اضافه کن (اما فقط اگر فال بک قبلاً پردازش نشده باشد)
+          if [ "$VALID_COUNT" -eq 0 ] && [ ! -s valid_subscription_links.txt ]; then
+            echo "⚠️ No valid new links found. Adding known working sources as fallback (only if not already processed)."
+            # فال بک‌ها را فقط اگر در processed_urls.txt نباشند اضافه کن (بعداً در مرحله به‌روزرسانی کش انجام می‌شود)
+            # فعلاً یک فایل موقت برای فال بک ایجاد می‌کنیم
+            cat > fallback_links.txt << 'EOF'
           https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt
           https://raw.githubusercontent.com/wang1680/v2ray-configs/main/all_configs.txt
           https://raw.githubusercontent.com/iranxray/hope/main/all_configs.txt
           https://raw.githubusercontent.com/freefq/free/main/v2ray
           https://raw.githubusercontent.com/ssrsub/ssr/master/ssr-sub
           EOF
+            # این فال بک‌ها را در valid_subscription_links.txt می‌ریزیم، اما بعداً در مرحله کش، URLهای تکراری حذف می‌شوند
+            cat fallback_links.txt >> valid_subscription_links.txt
             sort -u -o valid_subscription_links.txt valid_subscription_links.txt
           fi
+
+      - name: Update processed URLs cache (add all new raw URLs, even invalid)
+        run: |
+          # جمع‌آوری همه URLهای جدید (هم معتبر و هم نامعتبر) که در این اجرا بررسی شدند
+          cat subscription_links_raw.txt >> processed_urls.txt
+          # همچنین لینک‌هایی که در valid_subscription_links.txt هستند را هم اضافه کن (احتیاط)
+          cat valid_subscription_links.txt >> processed_urls.txt
+          # یکتا سازی فایل processed_urls.txt
+          sort -u -o processed_urls.txt processed_urls.txt
+          echo "✅ Updated processed URLs cache. Total unique processed URLs: $(wc -l < processed_urls.txt)"
 
       - name: Generate validation report
         run: |
@@ -148,23 +185,33 @@ jobs:
           mkdir -p reports
           {
             echo "# 🔍 گزارش اعتبارسنجی لینک‌های اشتراک"
+            echo ""
             echo "**تاریخ اجرا:** $DATE"
+            echo ""
+            echo "## 📊 خلاصه"
+            echo ""
             echo "| مرحله | تعداد |"
-            echo "|---|---|"
-            echo "| لینک‌های خام یافت شده | $RAW_COUNT |"
-            echo "| لینک‌های معتبر (دارای کانفیگ) | $VALID_COUNT |"
-            echo "## نمونه لینک‌های معتبر"
+            echo "|-------|-------|"
+            echo "| لینک‌های جدید یافت شده (قبلاً دیده نشده) | $RAW_COUNT |"
+            echo "| لینک‌های معتبر جدید (دارای کانفیگ) | $VALID_COUNT |"
+            echo "| کل لینک‌های پردازش شده در کل تاریخ | $(wc -l < processed_urls.txt) |"
+            echo ""
+            echo "## 🔗 نمونه لینک‌های معتبر جدید (حداکثر ۱۰ مورد)"
+            echo ""
             echo '```'
             head -10 valid_subscription_links.txt
             echo '```'
+            echo ""
+            echo "---"
+            echo "✅ لینک‌های تکراری قبلاً دیده شده دیگر جستجو نمی‌شوند."
           } > reports/validation_report.md
           
           cat reports/validation_report.md >> $GITHUB_STEP_SUMMARY
 
-      - name: Commit and push results
+      - name: Commit and push results (including cache)
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          git add subscription_links_raw.txt valid_subscription_links.txt reports/validation_report.md
-          git diff --staged --quiet || git commit -m "🔍 Update subscription links (validated) $(date '+%Y-%m-%d %H:%M:%S')"
+          git add subscription_links_raw.txt valid_subscription_links.txt processed_urls.txt reports/validation_report.md
+          git diff --staged --quiet || git commit -m "🔍 Update subscription links (new only) + cache $(date '+%Y-%m-%d %H:%M:%S')"
           git push
