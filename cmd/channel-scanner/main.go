@@ -38,7 +38,7 @@ var (
 
     client = &http.Client{Timeout: 15 * time.Second}
 
-    // الگوهای تشخیص کانفیگ
+    // الگوهای تشخیص کانفیگ (پشتیبانی از تمام پروتکل‌ها)
     configPatterns = []*regexp.Regexp{
         regexp.MustCompile(`vmess://[A-Za-z0-9+/]+={0,2}(?:\?[^\s]*)?`),
         regexp.MustCompile(`vless://[^\s]+`),
@@ -49,9 +49,10 @@ var (
         regexp.MustCompile(`hy2://[^\s]+`),
         regexp.MustCompile(`tuic://[^\s]+`),
         regexp.MustCompile(`wireguard://[^\s]+`),
+        regexp.MustCompile(`warp://[^\s]+`),
+        regexp.MustCompile(`slipnet://[^\s]+`),
         regexp.MustCompile(`tg://proxy\?[^\s]+`),
         regexp.MustCompile(`tg://socks\?[^\s]+`),
-        regexp.MustCompile(`slipnet://[^\s]+`),
         regexp.MustCompile(`https?://[^\s]+:\d+(?:[^\s]*)?`),
         regexp.MustCompile(`socks(?:5)?://[^\s]+@[^\s]+`),
         regexp.MustCompile(`socks(?:5)?://[^\s]+:\d+`),
@@ -164,7 +165,7 @@ func main() {
         }
     }
 
-    // حفظ موارد未扫描
+    // حفظ مواردی که اسکن نشده‌اند
     for k, v := range recentDead {
         updatedRecent[k] = v
     }
