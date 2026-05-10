@@ -1,4 +1,4 @@
-module github.com/ramin00542/GO_V2rayCollector
+module github.com/RaminTabriz/V2rayCollector
 
 go 1.21
 
