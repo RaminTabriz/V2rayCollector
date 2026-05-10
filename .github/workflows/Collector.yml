@@ -1,0 +1,79 @@
+name: Collector
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/20 * * * *"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  GOPROXY: https://proxy.golang.org,direct
+  GOSUMDB: sum.golang.org
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '>=1.21.3'
+
+      - name: Display Go version
+        run: go version
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Tidy dependencies
+        run: go mod tidy
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      - name: Run collector (new modular version)
+        run: |
+          export DEBUG=true
+          go run ./cmd/collector -sort -clash -fork-scan 2>&1 | tee collector_full.log
+          echo "===== FIRST 200 LINES ====="
+          head -n 200 collector_full.log
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@v4.1.0
+        with:
+          subject-path: 'myapp'
+
+      - name: Add statistics to job summary
+        run: |
+          echo "## 📊 Collector Statistics" >> $GITHUB_STEP_SUMMARY
+          if [ -f reports/collector_stats.md ]; then
+            cat reports/collector_stats.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No stats file yet" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "## 📄 Log excerpt" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          head -n 150 collector_full.log 2>/dev/null || echo "Log not found" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Commit changes
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git add --all
+          git diff --staged --quiet || git commit -m "🤖 Auto collect $(date '+%Y-%m-%d %H:%M:%S')"
+          git pull --rebase --autostash origin main
+          git push origin main
