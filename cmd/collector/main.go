@@ -17,7 +17,6 @@ import (
 )
 
 func main() {
-    // تعریف فلگ‌های خط فرمان
     var (
         channelsFile = flag.String("channels", "channels.csv", "Telegram channels CSV")
         sourcesFile  = flag.String("sources", "Sources.json", "Subscription sources JSON")
@@ -29,7 +28,6 @@ func main() {
     )
     flag.Parse()
 
-    // مقداردهی اولیه
     fetcher.Init()
     defer fetcher.Close()
 
@@ -47,7 +45,7 @@ func main() {
         os.Exit(0)
     }()
 
-    // دریافت کانفیگ‌ها از کانال‌های تلگرام
+    // Telegram channels
     tel := source.NewTelegram(*channelsFile, *concurrent)
     tel.FetchAll(ctx, func(cfg, channel string) {
         proto := parser.DetectProtocol(cfg)
@@ -57,7 +55,7 @@ func main() {
         cfgCache.Add(cfg, "telegram", channel, proto)
     })
 
-    // دریافت کانفیگ‌ها از منابع ساب‌لینک
+    // Subscription sources
     sub := source.NewSubscription(*sourcesFile, *concurrent)
     sub.FetchAll(ctx, func(cfg string) {
         proto := parser.DetectProtocol(cfg)
@@ -67,21 +65,23 @@ func main() {
         cfgCache.Add(cfg, "subscription", "", proto)
     })
 
-    // جستجو در فورک‌های گیت‌هاب
+    // GitHub forks (optional)
     if *forkScan {
         fork := source.NewGitHubFork(*targetRepo)
         fork.Scan(ctx, func(rawURL string) {
+            // در پیاده‌سازی کامل، باید محتوای rawURL را دریافت و کانفیگ‌ها را استخراج کرد
             gologger.Debug().Msgf("Found fork subscription: %s", rawURL)
         })
     }
 
-    // مرحله خروجی و گزارش‌گیری
+    // Output files
     output.WriteTelegramFiles(cfgCache, *sortOutput)
     output.WriteSubscriptionFiles(cfgCache, *sortOutput)
     output.WriteMixedFiles(cfgCache, *sortOutput)
     output.WriteAllConfigs(cfgCache, *sortOutput)
     output.ArchiveDaily(cfgCache)
 
+    // Reports
     report.GenerateStats(cfgCache)
     report.GenerateLinks(cfgCache)
 
