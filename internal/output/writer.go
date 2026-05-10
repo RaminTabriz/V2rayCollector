@@ -142,9 +142,8 @@ func WriteMixedFiles(c *cache.Cache, sortOutput bool) {
 func GenerateClashYAML(c *cache.Cache) {
     entries := c.GetAll()
     var proxies []string
-    for cfg, e := range entries {
+    for _, e := range entries {   // ← این خط اصلاح شد
         if e.Source == "subscription" || e.Source == "telegram" {
-            // تبدیل ساده به فرمت clash (فقط نمایش - قابل گسترش)
             proxies = append(proxies, fmt.Sprintf("  - name: \"%s_%d\"\n    type: %s\n    server: placeholder\n    port: 443\n", e.Protocol, e.Timestamp, e.Protocol))
         }
     }
