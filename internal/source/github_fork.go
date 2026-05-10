@@ -5,7 +5,6 @@ import (
     "encoding/json"
     "fmt"
     "net/http"
-    "strings"
     "time"
 
     "github.com/RaminTabriz/V2rayCollector/internal/fetcher"
