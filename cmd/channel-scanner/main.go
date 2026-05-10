@@ -5,7 +5,6 @@ import (
     "encoding/json"
     "flag"
     "fmt"
-    "io"
     "math/rand"
     "net/http"
     "os"
@@ -38,7 +37,6 @@ var (
 
     client = &http.Client{Timeout: 15 * time.Second}
 
-    // الگوهای تشخیص کانفیگ (پشتیبانی از تمام پروتکل‌ها)
     configPatterns = []*regexp.Regexp{
         regexp.MustCompile(`vmess://[A-Za-z0-9+/]+={0,2}(?:\?[^\s]*)?`),
         regexp.MustCompile(`vless://[^\s]+`),
@@ -49,10 +47,9 @@ var (
         regexp.MustCompile(`hy2://[^\s]+`),
         regexp.MustCompile(`tuic://[^\s]+`),
         regexp.MustCompile(`wireguard://[^\s]+`),
-        regexp.MustCompile(`warp://[^\s]+`),
-        regexp.MustCompile(`slipnet://[^\s]+`),
         regexp.MustCompile(`tg://proxy\?[^\s]+`),
         regexp.MustCompile(`tg://socks\?[^\s]+`),
+        regexp.MustCompile(`slipnet://[^\s]+`),
         regexp.MustCompile(`https?://[^\s]+:\d+(?:[^\s]*)?`),
         regexp.MustCompile(`socks(?:5)?://[^\s]+@[^\s]+`),
         regexp.MustCompile(`socks(?:5)?://[^\s]+:\d+`),
@@ -96,7 +93,6 @@ func main() {
         return
     }
 
-    // ساخت لیست URLها بر اساس flag old-scan
     urlSet := make(map[string]bool)
     for _, row := range records {
         if len(row) > 0 {
@@ -165,7 +161,6 @@ func main() {
         }
     }
 
-    // حفظ مواردی که اسکن نشده‌اند
     for k, v := range recentDead {
         updatedRecent[k] = v
     }
@@ -173,7 +168,6 @@ func main() {
         updatedOld[k] = v
     }
 
-    // نوشتن CSV فقط با کانال‌های فعال
     if err := writeActiveCSV(*outputCSV, headers, activeList); err != nil {
         fmt.Printf("Error writing CSV: %v\n", err)
     } else {
@@ -215,13 +209,11 @@ func analyzeFull(channelURL string) (ScanResult, error) {
         return ScanResult{}, fmt.Errorf("invalid URL")
     }
 
-    // اول تلاش RSS
     rssURL := fmt.Sprintf("https://t.me/s/%s.rss", channelName)
     res, err := fetchFromRSS(rssURL, channelURL)
     if err == nil {
         return res, nil
     }
-    // اگر RSS کار نکرد، HTML
     htmlURL := fmt.Sprintf("https://t.me/s/%s", channelName)
     return fetchFromHTML(htmlURL, channelURL)
 }
@@ -354,7 +346,6 @@ func extractChannelName(rawURL string) string {
     return ""
 }
 
-// ---------- I/O ----------
 func readCSV(path string) ([][]string, []string, error) {
     f, err := os.Open(path)
     if err != nil {
