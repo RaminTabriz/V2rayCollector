@@ -1,10 +1,1 @@
-# github.com/RaminTabriz/V2rayCollector/internal/report
-internal/report/links.go:12:19: undefined: detectRawBaseURL
-internal/report/links.go:45:29: undefined: fileStats
-internal/report/links.go:60:29: undefined: fileStats
-internal/report/links.go:76:33: undefined: fileStats
-internal/report/stats.go:14:5: "github.com/projectdiscovery/gologger" imported and not used
-internal/report/stats.go:85:44: e.Original undefined (type cache.Entry has no field or method Original)
-internal/report/stats.go:102:42: e.Original undefined (type cache.Entry has no field or method Original)
-internal/report/stats.go:225:74: kv.ch undefined (type kv has no field or method ch)
-internal/report/stats.go:317:11: undefined: regexp
+cmd/collector/main.go:2:1: expected 'package', found 'type'
