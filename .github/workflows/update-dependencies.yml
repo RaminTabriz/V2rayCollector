@@ -14,7 +14,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        # استفاده از GITHUB_TOKEN برای خواندن (کافی است)
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Find and update all actions
         id: actions
@@ -66,68 +67,16 @@ jobs:
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "changed=true" >> $GITHUB_OUTPUT
-            mkdir -p reports
-            NOW=$(date '+%Y-%m-%d %H:%M:%S')
-            MOD_LINES=$(git diff go.mod.bak go.mod 2>/dev/null | wc -l)
-            SUM_LINES=$(git diff go.sum.bak go.sum 2>/dev/null | wc -l)
-            cat > reports/go_deps_update.md << EOF
-          # 📦 گزارش به‌روزرسانی Go Dependencies
-          **تاریخ:** ${NOW}
-          - تغییرات go.mod: ${MOD_LINES} خط
-          - تغییرات go.sum: ${SUM_LINES} خط
-          EOF
-          fi
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        if: hashFiles('package.json') != ''
-        with:
-          node-version: '20'
-
-      - name: Update npm packages
-        id: npm
-        if: hashFiles('package.json') != ''
-        run: |
-          npm install -g npm@latest
-          npm install -g npm-check-updates
-          ncu -u
-          npm install
-          if git diff --quiet package.json package-lock.json; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
       - name: Commit and push all changes
         if: >-
           (steps.actions.outputs.changed == 'true') ||
-          (steps.go.outputs.changed == 'true') ||
-          (steps.npm.outputs.changed == 'true')
+          (steps.go.outputs.changed == 'true')
         run: |
-          # دیباگ: بررسی وجود PAT_TOKEN
-          if [ -n "${{ secrets.PAT_TOKEN }}" ]; then
-            echo "PAT_TOKEN is set (first 10 chars: ${PAT_TOKEN:0:10})"
-          else
-            echo "PAT_TOKEN is NOT set! Push will fail."
-            exit 1
-          fi
-          
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
           git add .github/workflows go.mod go.sum 2>/dev/null || true
-          [ -f package.json ] && git add package.json
-          [ -f package-lock.json ] && git add package-lock.json
-          [ -d reports ] && git add reports
-          
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-          
-          git commit -m "chore(deps): update all dependencies [skip ci]"
-          
-          # تنظیم remote URL با PAT_TOKEN
-          git remote set-url origin "https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git"
-          git push origin HEAD:main
-        env:
-          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          git diff --staged --quiet || git commit -m "Update dependencies $(date '+%Y-%m-%d')"
+          git pull --rebase --autostash origin main || true
+          git push origin main
