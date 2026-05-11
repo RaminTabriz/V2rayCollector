@@ -6,7 +6,7 @@ on:
     - cron: "0 0 * * 0"
 
 permissions:
-  contents: write
+  contents: write   # برای commit عادی کافی است
 
 jobs:
   update-all:
@@ -15,12 +15,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PAT_TOKEN }}   # استفاده از PAT
 
       - name: Find and update all actions
         id: actions
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           find .github/workflows -name "*.yml" -o -name "*.yaml" | \
             xargs grep -ohE 'uses: [a-zA-Z0-9_/-]+@[v0-9a-zA-Z.]+' 2>/dev/null | \
