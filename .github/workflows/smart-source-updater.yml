@@ -27,7 +27,7 @@ on:
 
 concurrency:
   group: update-sources
-  cancel-in-progress: true
+  cancel-in-progress: false    # جلوگیری از لغو خودکار اجراهای همزمان
 
 permissions:
   contents: write
@@ -35,7 +35,7 @@ permissions:
 jobs:
   update-sources:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60        # افزایش زمان مجاز به ۶۰ دقیقه
     steps:
       - uses: actions/checkout@v4
 
@@ -48,9 +48,26 @@ jobs:
           if [ ! -f filters.json ]; then
             printf '%s\n' '{' > filters.json
             printf '  "exclude_repos": [],\n' >> filters.json
-            printf '  "include_paths": ["", "main", "subscriptions", "sub", "Sub", "subs", "sing-box", "clash", "v2ray", "configs"],\n' >> filters.json
+            printf '  "include_paths": [\n' >> filters.json
+            printf '    "",\n' >> filters.json
+            printf '    "main",\n' >> filters.json
+            printf '    "subscriptions",\n' >> filters.json
+            printf '    "sub",\n' >> filters.json
+            printf '    "Sub",\n' >> filters.json
+            printf '    "subs",\n' >> filters.json
+            printf '    "sing-box",\n' >> filters.json
+            printf '    "clash",\n' >> filters.json
+            printf '    "v2ray",\n' >> filters.json
+            printf '    "configs",\n' >> filters.json
+            printf '    "main/mci",\n' >> filters.json
+            printf '    "main/mtn",\n' >> filters.json
+            printf '    "clash/meta",\n' >> filters.json
+            printf '    "mixed",\n' >> filters.json
+            printf '    "v2ray-config"\n' >> filters.json
+            printf '  ],\n' >> filters.json
             printf '  "exclude_patterns": ["test", "sample", "example", "demo"],\n' >> filters.json
-            printf '  "search_keywords": ["v2ray", "subscription", "config.txt", "vmess", "vless"]\n' >> filters.json
+            printf '  "search_keywords": ["v2ray", "subscription", "config.txt", "vmess", "vless"],\n' >> filters.json
+            printf '  "max_files_per_repo": 20\n' >> filters.json
             printf '}\n' >> filters.json
           fi
 
@@ -107,7 +124,7 @@ jobs:
             > scanned_repos.txt
           fi
 
-      - name: اسکن مخازن موجود
+      - name: اسکن مخازن موجود (ایمن، بدون موازی‌سازی)
         if: github.event.inputs.enable_scan != 'false' || github.event_name == 'workflow_run'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -126,18 +143,20 @@ jobs:
             done
             return 1
           }
-          echo "🔍 اسکن مخازن موجود..."
+          echo "🔍 اسکن مخازن موجود (حالت ایمن)..."
           NEW_LINKS_FROM_SCAN="new_from_scan.txt"
           > "$NEW_LINKS_FROM_SCAN"
           
-          echo "🧹 حذف لینک‌های نامعتبر..."
+          # حذف لینک‌های مرده با بررسی محتوای واقعی
+          echo "🧹 حذف لینک‌های نامعتبر (بررسی محتوا)..."
           jq -r '.[]' Sources.json > all_links.txt
           > valid_links.txt
           while IFS= read -r url; do
-            if retry_with_backoff "curl -sI -L --max-time 10 '$url' | head -1 | grep -q '200\|301\|302'"; then
+            content=$(curl -sL --max-time 10 "$url" 2>/dev/null)
+            if [ -n "$content" ] && [ ${#content} -gt 100 ] && echo "$content" | grep -qE '^(vmess|vless|trojan|ss|ssr)://'; then
               echo "$url" >> valid_links.txt
             else
-              echo "🗑️ لینک مرده: $url"
+              echo "🗑️ لینک نامعتبر (محتوا): $url"
             fi
           done < all_links.txt
           jq -R . valid_links.txt | jq -s . > Sources.json
@@ -148,48 +167,53 @@ jobs:
           EXCLUDE_REPOS=$(jq -r '.exclude_repos[]' filters.json 2>/dev/null | tr '\n' '|')
           INCLUDE_PATHS=$(jq -r '.include_paths[]' filters.json 2>/dev/null)
           EXCLUDE_PATTERNS=$(jq -r '.exclude_patterns[]' filters.json 2>/dev/null | tr '\n' '|')
+          MAX_FILES=$(jq -r '.max_files_per_repo // 20' filters.json 2>/dev/null)
           
           TOTAL_API_CALLS=0
           repos_count=0
           
-          if [ -s all_current_links.txt ]; then
-            while IFS= read -r url; do
-              url="${url#"${url%%[![:space:]]*}"}"
-              url="${url%"${url##*[![:space:]]}"}"
-              [ -z "$url" ] && continue
-              REPO_INFO=$(echo "$url" | awk -F'/' '{for(i=1;i<=NF;i++) if($i=="raw.githubusercontent.com") {print $(i-3), $(i-2); exit}}')
-              [ -z "$REPO_INFO" ] && continue
-              OWNER=$(echo "$REPO_INFO" | cut -d' ' -f1)
-              REPO=$(echo "$REPO_INFO" | cut -d' ' -f2)
-              REPO_FULL="$OWNER/$REPO"
+          while IFS= read -r url; do
+            url="${url#"${url%%[![:space:]]*}"}"
+            url="${url%"${url##*[![:space:]]}"}"
+            [ -z "$url" ] && continue
+            REPO_INFO=$(echo "$url" | awk -F'/' '{for(i=1;i<=NF;i++) if($i=="raw.githubusercontent.com") {print $(i-3), $(i-2); exit}}')
+            [ -z "$REPO_INFO" ] && continue
+            OWNER=$(echo "$REPO_INFO" | cut -d' ' -f1)
+            REPO=$(echo "$REPO_INFO" | cut -d' ' -f2)
+            REPO_FULL="$OWNER/$REPO"
+            
+            if [ -n "$EXCLUDE_REPOS" ] && echo "$REPO_FULL" | grep -qE "$EXCLUDE_REPOS"; then continue; fi
+            if grep -Fxq "$REPO_FULL" scanned_repos.txt; then continue; fi
+            
+            echo "📁 اسکن: $REPO_FULL"
+            repos_count=$((repos_count + 1))
+            
+            file_count=0
+            for dir_path in $INCLUDE_PATHS; do
+              API_URL="https://api.github.com/repos/$OWNER/$REPO/contents/$dir_path"
+              TOTAL_API_CALLS=$((TOTAL_API_CALLS + 1))
+              response=$(retry_with_backoff "curl -s -H 'Authorization: token $GH_TOKEN' -H 'Accept: application/vnd.github.v3+json' '$API_URL'") || continue
+              if echo "$response" | jq -e '.message == "Not Found"' >/dev/null 2>&1; then continue; fi
               
-              if [ -n "$EXCLUDE_REPOS" ] && echo "$REPO_FULL" | grep -qE "$EXCLUDE_REPOS"; then continue; fi
-              if grep -Fxq "$REPO_FULL" scanned_repos.txt; then continue; fi
-              
-              echo "📁 اسکن: $REPO_FULL"
-              repos_count=$((repos_count + 1))
-              
-              for dir_path in $INCLUDE_PATHS; do
-                API_URL="https://api.github.com/repos/$OWNER/$REPO/contents/$dir_path"
-                TOTAL_API_CALLS=$((TOTAL_API_CALLS + 1))
-                response=$(retry_with_backoff "curl -s -H 'Authorization: token $GH_TOKEN' -H 'Accept: application/vnd.github.v3+json' '$API_URL'") || continue
-                if echo "$response" | jq -e '.message == "Not Found"' >/dev/null 2>&1; then continue; fi
-                
-                echo "$response" | jq -r '.[] | select(.type=="file") | select(.name | endswith(".txt")) | .download_url' 2>/dev/null > /tmp/files.txt
-                while IFS= read -r file_url; do
-                  if [ -n "$EXCLUDE_PATTERNS" ] && echo "$file_url" | grep -qiE "$EXCLUDE_PATTERNS"; then continue; fi
-                  if retry_with_backoff "curl -sL --max-time 10 '$file_url' | head -c 2000 | grep -qE '(vmess|vless|trojan|ss://|ssr://)'"; then
-                    if ! grep -Fxq "$file_url" all_current_links.txt; then
-                      echo "$file_url" >> "$NEW_LINKS_FROM_SCAN"
-                      echo "  ✅ ساب جدید: $file_url"
-                    fi
+              echo "$response" | jq -r '.[] | select(.type=="file") | select(.name | endswith(".txt")) | .download_url' 2>/dev/null > /tmp/files.txt
+              while IFS= read -r file_url; do
+                if [ -n "$EXCLUDE_PATTERNS" ] && echo "$file_url" | grep -qiE "$EXCLUDE_PATTERNS"; then continue; fi
+                if retry_with_backoff "curl -sL --max-time 10 '$file_url' | head -c 2000 | grep -qE '(vmess|vless|trojan|ss://|ssr://)'"; then
+                  if ! grep -Fxq "$file_url" all_current_links.txt; then
+                    echo "$file_url" >> "$NEW_LINKS_FROM_SCAN"
+                    echo "  ✅ ساب جدید: $file_url"
                   fi
-                done < /tmp/files.txt
-              done
-              echo "$REPO_FULL" >> scanned_repos.txt
-              sleep 0.2
-            done < all_current_links.txt
-          fi
+                fi
+                file_count=$((file_count+1))
+                if [ $file_count -ge $MAX_FILES ]; then
+                  echo "⚠️ به حداکثر تعداد فایل ($MAX_FILES) رسیدیم، توقف اسکن $REPO_FULL"
+                  break 2
+                fi
+              done < /tmp/files.txt
+            done
+            echo "$REPO_FULL" >> scanned_repos.txt
+            sleep 1   # تأخیر بین مخازن برای جلوگیری از rate limit
+          done < all_current_links.txt
           
           sort -u -o "$NEW_LINKS_FROM_SCAN" "$NEW_LINKS_FROM_SCAN" 2>/dev/null
           NEW_COUNT=$(wc -l < "$NEW_LINKS_FROM_SCAN" 2>/dev/null || echo "0")
@@ -204,7 +228,7 @@ jobs:
           echo "✅ اسکن مخازن موجود پایان یافت. $NEW_COUNT ساب جدید پیدا شد."
           set -e
 
-      - name: جستجوی مخازن جدید
+      - name: جستجوی مخازن جدید (با فیلتر کیفیت)
         if: github.event.inputs.enable_discovery == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -222,9 +246,10 @@ jobs:
             done
             return 1
           }
-          echo "🔎 جستجوی مخازن جدید..."
+          echo "🔎 جستجوی مخازن جدید با فیلتر کیفیت (ستاره > 5، به‌روز در 60 روز گذشته)..."
           SEARCH_KEYWORDS="${{ github.event.inputs.search_keywords || 'v2ray subscription config.txt' }}"
           QUERY=$(echo "$SEARCH_KEYWORDS" | tr ' ' '+')
+          SINCE=$(date -d '60 days ago' +%Y-%m-%d)
           
           DISCOVERED_REPOS="discovered_repos.txt"
           NEW_SUBS_DISCOVERED="new_subs_from_discovery.txt"
@@ -232,7 +257,7 @@ jobs:
           > "$NEW_SUBS_DISCOVERED"
           
           for page in 1 2 3; do
-            SEARCH_URL="https://api.github.com/search/repositories?q=$QUERY+extension:txt&sort=updated&order=desc&per_page=30&page=$page"
+            SEARCH_URL="https://api.github.com/search/repositories?q=$QUERY+extension:txt+stars:>5+pushed:>$SINCE&sort=stars&order=desc&per_page=30&page=$page"
             RESP=$(retry_with_backoff "curl -s -H 'Authorization: token $GH_TOKEN' -H 'Accept: application/vnd.github.v3+json' '$SEARCH_URL'") || break
             echo "$RESP" | jq -r '.items[].full_name' 2>/dev/null >> "$DISCOVERED_REPOS"
             sleep 0.5
@@ -245,6 +270,7 @@ jobs:
           
           INCLUDE_PATHS=$(jq -r '.include_paths[]' filters.json 2>/dev/null)
           EXCLUDE_PATTERNS=$(jq -r '.exclude_patterns[]' filters.json 2>/dev/null | tr '\n' '|')
+          MAX_FILES=$(jq -r '.max_files_per_repo // 20' filters.json 2>/dev/null)
           touch all_current_links.txt
           cp all_current_links.txt all_current_links_backup.txt
           
@@ -253,7 +279,7 @@ jobs:
             OWNER=$(echo "$repo_full" | cut -d'/' -f1)
             REPO=$(echo "$repo_full" | cut -d'/' -f2)
             echo "📁 اسکن مخزن جدید: $repo_full"
-            
+            file_count=0
             for dir_path in $INCLUDE_PATHS; do
               API_URL="https://api.github.com/repos/$OWNER/$REPO/contents/$dir_path"
               response=$(retry_with_backoff "curl -s -H 'Authorization: token $GH_TOKEN' -H 'Accept: application/vnd.github.v3+json' '$API_URL'") || continue
@@ -266,10 +292,12 @@ jobs:
                     echo "  ✅ ساب جدید از کشف: $file_url"
                   fi
                 fi
+                file_count=$((file_count+1))
+                if [ $file_count -ge $MAX_FILES ]; then break 2; fi
               done < /tmp/discovered_files.txt
             done
             echo "$repo_full" >> scanned_repos.txt
-            sleep 0.2
+            sleep 0.5
           done < new_repos_to_scan.txt
           
           if [ -s "$NEW_SUBS_DISCOVERED" ]; then
