@@ -112,4 +112,4 @@ jobs:
           [ -d reports ] && git add reports
           git diff --staged --quiet || git commit -m "chore(deps): update all dependencies [skip ci]"
           # استفاده از PAT_TOKEN برای push (دسترسی به workflow)
-          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
+          git push https://x-access-token:${{ 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 }}@github.com/${{ github.repository }}.git HEAD:main
