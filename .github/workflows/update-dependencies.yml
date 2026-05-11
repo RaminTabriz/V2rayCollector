@@ -84,6 +84,8 @@ jobs:
           git config user.name "GitHub Actions"
           git add go.mod go.sum 2>/dev/null || true
           git add .github/workflows
+          git add .github/cmd
+          git add .github/internal
           git diff --staged --quiet || git commit -m "Update dependencies $(date '+%Y-%m-%d')"
           git push origin main
         env:
