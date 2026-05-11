@@ -72,11 +72,11 @@ jobs:
             MOD_LINES=$(git diff go.mod.bak go.mod 2>/dev/null | wc -l)
             SUM_LINES=$(git diff go.sum.bak go.sum 2>/dev/null | wc -l)
             cat > reports/go_deps_update.md << EOF
-            # 📦 گزارش به‌روزرسانی Go Dependencies
-            **تاریخ:** ${NOW}
-            - تغییرات go.mod: ${MOD_LINES} خط
-            - تغییرات go.sum: ${SUM_LINES} خط
-            EOF
+          # 📦 گزارش به‌روزرسانی Go Dependencies
+          **تاریخ:** ${NOW}
+          - تغییرات go.mod: ${MOD_LINES} خط
+          - تغییرات go.sum: ${SUM_LINES} خط
+          EOF
           fi
 
       # ------------------- به‌روزرسانی npm dependencies (اختیاری) -------------------
