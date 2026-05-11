@@ -109,6 +109,10 @@ jobs:
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          git add .github/workflows go.mod go.sum package.json package-lock.json reports/
+          # اضافه کردن فایل‌هایی که وجود دارند
+          git add .github/workflows go.mod go.sum 2>/dev/null || true
+          [ -f package.json ] && git add package.json
+          [ -f package-lock.json ] && git add package-lock.json
+          [ -d reports ] && git add reports
           git diff --staged --quiet || git commit -m "chore(deps): update all dependencies [skip ci]"
           git push
