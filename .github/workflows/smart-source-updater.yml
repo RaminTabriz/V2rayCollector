@@ -335,20 +335,19 @@ jobs:
           TOTAL=$((ADDED+SCAN_ADDED+DISCOVERED_ADDED))
           DATE=$(date '+%Y-%m-%d %H:%M:%S')
           mkdir -p reports
-          cat > reports/update_summary.md << EOF
-# 📡 گزارش به‌روزرسانی هوشمند
-**تاریخ:** $DATE
-
-| مرحله | تعداد |
-|-------|-------|
-| لینک‌های جدید از ادغام | $ADDED |
-| اسکن مخازن موجود | $SCAN_ADDED |
-| جستجوی مخازن جدید | $DISCOVERED_ADDED |
-| **جمع ساب‌لینک‌های جدید** | $TOTAL |
-| کانال‌های تلگرام جدید | $CHANNELS |
-| مخازن اسکن شده | ${TOTAL_REPOS_SCANNED:-0} |
-| کل درخواست‌های API | ${TOTAL_API_CALLS:-0} |
-EOF
+          {
+            echo "# 📡 گزارش به‌روزرسانی هوشمند"
+            echo "**تاریخ:** $DATE"
+            echo "| مرحله | تعداد |"
+            echo "|-------|-------|"
+            echo "| لینک‌های جدید از ادغام | $ADDED |"
+            echo "| اسکن مخازن موجود | $SCAN_ADDED |"
+            echo "| جستجوی مخازن جدید | $DISCOVERED_ADDED |"
+            echo "| **جمع ساب‌لینک‌های جدید** | $TOTAL |"
+            echo "| کانال‌های تلگرام جدید | $CHANNELS |"
+            echo "| مخازن اسکن شده | ${TOTAL_REPOS_SCANNED:-0} |"
+            echo "| کل درخواست‌های API | ${TOTAL_API_CALLS:-0} |"
+          } > reports/update_summary.md
           cat reports/update_summary.md >> $GITHUB_STEP_SUMMARY
 
       - uses: actions/upload-artifact@v4
@@ -372,9 +371,14 @@ EOF
           fi
 
       - name: ارسال اعلان به تلگرام
-        if: always() && steps.commit.outputs.pushed == 'true' && secrets.TG_BOT_TOKEN != ''
+        if: always() && steps.commit.outputs.pushed == 'true'
+        env:
+          TG_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TG_CHAT_ID }}
         run: |
-          TOTAL=$(( ${ADDED_COUNT:-0} + ${NEW_LINKS_FROM_SCAN_COUNT:-0} + ${DISCOVERED_LINKS_COUNT:-0} ))
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.TG_CHAT_ID }}" \
-            -d "text=✅ Sources.json به‌روز شد! $TOTAL لینک جدید اضافه شد. (ادغام:+${ADDED_COUNT:-0}, اسکن:+${NEW_LINKS_FROM_SCAN_COUNT:-0}, کشف:+${DISCOVERED_LINKS_COUNT:-0})"
+          if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
+            TOTAL=$(( ${ADDED_COUNT:-0} + ${NEW_LINKS_FROM_SCAN_COUNT:-0} + ${DISCOVERED_LINKS_COUNT:-0} ))
+            curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+              -d "chat_id=${TG_CHAT}" \
+              -d "text=✅ Sources.json به‌روز شد! $TOTAL لینک جدید اضافه شد. (ادغام:+${ADDED_COUNT:-0}, اسکن:+${NEW_LINKS_FROM_SCAN_COUNT:-0}, کشف:+${DISCOVERED_LINKS_COUNT:-0})"
+          fi
