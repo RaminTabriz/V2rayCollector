@@ -46,14 +46,12 @@ jobs:
           [ ! -f channels.csv ] && echo "# Telegram Channels" > channels.csv
           [ ! -f stats/history.csv ] && echo "date,ADDED,SCAN_ADDED,DISCOVERED_ADDED" > stats/history.csv
           if [ ! -f filters.json ]; then
-            cat > filters.json << 'EOF'
-{
-  "exclude_repos": [],
-  "include_paths": ["", "main", "subscriptions", "sub", "Sub", "subs", "sing-box", "clash", "v2ray", "configs"],
-  "exclude_patterns": ["test", "sample", "example", "demo"],
-  "search_keywords": ["v2ray", "subscription", "config.txt", "vmess", "vless"]
-}
-EOF
+            printf '%s\n' '{' > filters.json
+            printf '  "exclude_repos": [],\n' >> filters.json
+            printf '  "include_paths": ["", "main", "subscriptions", "sub", "Sub", "subs", "sing-box", "clash", "v2ray", "configs"],\n' >> filters.json
+            printf '  "exclude_patterns": ["test", "sample", "example", "demo"],\n' >> filters.json
+            printf '  "search_keywords": ["v2ray", "subscription", "config.txt", "vmess", "vless"]\n' >> filters.json
+            printf '}\n' >> filters.json
           fi
 
       - name: بکاپ از Sources.json
@@ -115,7 +113,6 @@ EOF
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          # تابع retry با backoff
           retry_with_backoff() {
             local max_attempts=3
             local attempt=1
@@ -133,7 +130,6 @@ EOF
           NEW_LINKS_FROM_SCAN="new_from_scan.txt"
           > "$NEW_LINKS_FROM_SCAN"
           
-          # حذف لینک‌های مرده
           echo "🧹 حذف لینک‌های نامعتبر..."
           jq -r '.[]' Sources.json > all_links.txt
           > valid_links.txt
