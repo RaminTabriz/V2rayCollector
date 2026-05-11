@@ -14,7 +14,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        # از توکن پیش‌فرض استفاده می‌کنیم (GITHUB_TOKEN)
+        # استفاده از GITHUB_TOKEN برای خواندن (کافی است)
 
       - name: Find and update all actions
         id: actions
@@ -103,8 +103,6 @@ jobs:
           (steps.actions.outputs.changed == 'true') ||
           (steps.go.outputs.changed == 'true') ||
           (steps.npm.outputs.changed == 'true')
-        env:
-          PAT: ${{ secrets.PAT_TOKEN }}
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
@@ -112,14 +110,6 @@ jobs:
           [ -f package.json ] && git add package.json
           [ -f package-lock.json ] && git add package-lock.json
           [ -d reports ] && git add reports
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-          git commit -m "chore(deps): update all dependencies [skip ci]"
-          # اگر PAT وجود دارد، از آن استفاده کن (برای به‌روزرسانی workflow)
-          if [ -n "$PAT" ]; then
-            git push https://x-access-token:${PAT}@github.com/${GITHUB_REPOSITORY}.git HEAD:main
-          else
-            git push
-          fi
+          git diff --staged --quiet || git commit -m "chore(deps): update all dependencies [skip ci]"
+          # استفاده از PAT_TOKEN برای push (دسترسی به workflow)
+          git push https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
