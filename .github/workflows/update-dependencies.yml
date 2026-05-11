@@ -1,83 +1,114 @@
-name: 🔄 Update Dependencies
+name: 🔄 Update All Dependencies
 
 on:
+  workflow_dispatch:
   schedule:
-    - cron: "0 0 * * 0"   # هر یکشنبه ساعت 00:00 UTC
-  workflow_dispatch:       # قابلیت اجرای دستی
+    - cron: "0 0 * * 0"
+
+permissions:
+  contents: write
 
 jobs:
-  update:
+  update-all:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ------------------- به‌روزرسانی GitHub Actions -------------------
+      - name: Find and update all actions
+        id: actions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          find .github/workflows -name "*.yml" -o -name "*.yaml" | \
+            xargs grep -ohE 'uses: [a-zA-Z0-9_/-]+@[v0-9a-zA-Z.]+' 2>/dev/null | \
+            sed 's/uses: //' | sort -u > /tmp/actions.txt
+          
+          while IFS= read -r action_ref; do
+            [ -z "$action_ref" ] && continue
+            action_name=$(echo "$action_ref" | cut -d'@' -f1)
+            current_version=$(echo "$action_ref" | cut -d'@' -f2)
+            if [[ "$action_name" == actions/* ]]; then
+              latest=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                "https://api.github.com/repos/$action_name/releases/latest" | \
+                grep -o '"tag_name": "[^"]*' | cut -d'"' -f4)
+              if [ -n "$latest" ] && [ "$latest" != "$current_version" ]; then
+                echo "Updating $action_name: $current_version -> $latest"
+                find .github/workflows -name "*.yml" -o -name "*.yaml" | \
+                  xargs sed -i "s|\($action_name@\)[^[:space:]]*|\1$latest|g"
+              fi
+            fi
+          done < /tmp/actions.txt
+          
+          if git diff --quiet .github/workflows; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      # ------------------- به‌روزرسانی Go dependencies -------------------
       - name: Setup Go
         uses: actions/setup-go@v5
+        if: hashFiles('go.mod') != ''
         with:
           go-version: '>=1.21.3'
 
-      - name: Create reports directory
-        run: mkdir -p reports
-
-      - name: Backup current go.mod and go.sum
+      - name: Update Go modules
+        id: go
+        if: hashFiles('go.mod') != ''
         run: |
           cp go.mod go.mod.bak
           cp go.sum go.sum.bak
-
-      - name: Update dependencies
-        run: |
           go get -u ./...
           go mod tidy
-
-      - name: Check for changes
-        id: changes
-        run: |
-          if ! diff -q go.mod go.mod.bak > /dev/null 2>&1 || ! diff -q go.sum go.sum.bak > /dev/null 2>&1; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-          else
+          
+          if git diff --quiet go.mod go.mod.bak && git diff --quiet go.sum go.sum.bak; then
             echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            mkdir -p reports
+            NOW=$(date '+%Y-%m-%d %H:%M:%S')
+            MOD_LINES=$(git diff go.mod.bak go.mod 2>/dev/null | wc -l)
+            SUM_LINES=$(git diff go.sum.bak go.sum 2>/dev/null | wc -l)
+            cat > reports/go_deps_update.md << EOF
+          # 📦 گزارش به‌روزرسانی Go Dependencies
+          **تاریخ:** ${NOW}
+          - تغییرات go.mod: ${MOD_LINES} خط
+          - تغییرات go.sum: ${SUM_LINES} خط
+          EOF
           fi
 
-      - name: Generate statistics
-        id: stats
-        if: steps.changes.outputs.changed == 'true'
-        run: |
-          MOD_ADDED=$(git diff --numstat go.mod.bak go.mod | awk '{print $1}' | grep -E '^[0-9]+$' || echo 0)
-          MOD_REMOVED=$(git diff --numstat go.mod.bak go.mod | awk '{print $2}' | grep -E '^[0-9]+$' || echo 0)
-          MOD_CHANGES=$((MOD_ADDED + MOD_REMOVED))
-          SUM_ADDED=$(git diff --numstat go.sum.bak go.sum | awk '{print $1}' | grep -E '^[0-9]+$' || echo 0)
-          SUM_REMOVED=$(git diff --numstat go.sum.bak go.sum | awk '{print $2}' | grep -E '^[0-9]+$' || echo 0)
-          SUM_CHANGES=$((SUM_ADDED + SUM_REMOVED))
-          echo "mod_changes=$MOD_CHANGES" >> $GITHUB_OUTPUT
-          echo "sum_changes=$SUM_CHANGES" >> $GITHUB_OUTPUT
-          echo "changed=true" >> $GITHUB_OUTPUT
+      # ------------------- به‌روزرسانی npm dependencies (اختیاری) -------------------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        if: hashFiles('package.json') != ''
+        with:
+          node-version: '20'
 
-      - name: Build Markdown report
-        if: steps.changes.outputs.changed == 'true'
+      - name: Update npm packages
+        id: npm
+        if: hashFiles('package.json') != ''
         run: |
-          NOW=$(date '+%Y-%m-%d %H:%M:%S')
-          cat > reports/deps_update_report.md << EOF
-          # 📦 گزارش به‌روزرسانی وابستگی‌ها
-          **تاریخ اجرا:** ${NOW}
-          ## خلاصه آماری
-          | معیار | مقدار |
-          |-------|-------|
-          | خطوط تغییر یافته در go.mod | ${{ steps.stats.outputs.mod_changes }} |
-          | تغییرات در go.sum | ${{ steps.stats.outputs.sum_changes }} |
-          ---
-          ✅ گزارش توسط GitHub Actions تولید شده است.
-          EOF
+          npm install -g npm@latest
+          npm install -g npm-check-updates
+          ncu -u
+          npm install
+          if git diff --quiet package.json package-lock.json; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Commit and push changes
-        if: steps.changes.outputs.changed == 'true'
+      # ------------------- مرحله commit و push در صورت وجود تغییر -------------------
+      - name: Commit and push all changes
+        if: >-
+          (steps.actions.outputs.changed == 'true') ||
+          (steps.go.outputs.changed == 'true') ||
+          (steps.npm.outputs.changed == 'true')
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          git add go.mod go.sum reports/deps_update_report.md
-          git diff --staged --quiet || git commit -m "chore(deps): update dependencies [skip ci]"
-          git pull --rebase --autostash origin main
-          git push origin main
+          git add .github/workflows go.mod go.sum package.json package-lock.json reports/
+          git diff --staged --quiet || git commit -m "chore(deps): update all dependencies [skip ci]"
+          git push
