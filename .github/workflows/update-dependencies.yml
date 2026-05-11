@@ -15,12 +15,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PAT_TOKEN }}
 
       - name: Find and update all actions
         id: actions
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           find .github/workflows -name "*.yml" -o -name "*.yaml" | \
             xargs grep -ohE 'uses: [a-zA-Z0-9_/-]+@[v0-9a-zA-Z.]+' 2>/dev/null | \
@@ -63,10 +63,16 @@ jobs:
           go get -u ./...
           go mod tidy
           
+          echo "=== Debug: Checking changes ==="
+          git diff --no-color go.mod go.mod.bak
+          git diff --no-color go.sum go.sum.bak
+          
           if git diff --quiet go.mod go.mod.bak && git diff --quiet go.sum go.sum.bak; then
             echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No changes detected"
           else
             echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Changes detected!"
           fi
 
       - name: Commit and push all changes
