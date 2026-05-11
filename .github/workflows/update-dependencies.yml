@@ -22,6 +22,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
+          # لیست actionهای به‌روز شده
+          UPDATED_ACTIONS=""
           find .github/workflows -name "*.yml" -o -name "*.yaml" | \
             xargs grep -ohE 'uses: [a-zA-Z0-9_/-]+@[v0-9a-zA-Z.]+' 2>/dev/null | \
             sed 's/uses: //' | sort -u > /tmp/actions.txt
@@ -38,9 +40,15 @@ jobs:
                 echo "Updating $action_name: $current_version -> $latest"
                 find .github/workflows -name "*.yml" -o -name "*.yaml" | \
                   xargs sed -i "s|\($action_name@\)[^[:space:]]*|\1$latest|g"
+                UPDATED_ACTIONS="${UPDATED_ACTIONS}\n- $action_name: $current_version → $latest"
               fi
             fi
           done < /tmp/actions.txt
+          
+          # ذخیره لیست به‌روزرسانی‌ها برای مرحله گزارش
+          echo "UPDATED_ACTIONS<<EOF" >> $GITHUB_ENV
+          echo -e "$UPDATED_ACTIONS" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
           
           if git diff --quiet .github/workflows; then
             echo "changed=false" >> $GITHUB_OUTPUT
@@ -63,17 +71,50 @@ jobs:
           go get -u ./...
           go mod tidy
           
-          echo "=== Debug: Checking changes ==="
-          git diff --no-color go.mod go.mod.bak
-          git diff --no-color go.sum go.sum.bak
-          
           if git diff --quiet go.mod go.mod.bak && git diff --quiet go.sum go.sum.bak; then
             echo "changed=false" >> $GITHUB_OUTPUT
-            echo "No changes detected"
           else
             echo "changed=true" >> $GITHUB_OUTPUT
-            echo "Changes detected!"
+            # ذخیره آمار تغییرات برای گزارش
+            MOD_LINES=$(git diff go.mod.bak go.mod 2>/dev/null | wc -l)
+            SUM_LINES=$(git diff go.sum.bak go.sum 2>/dev/null | wc -l)
+            echo "MOD_LINES=$MOD_LINES" >> $GITHUB_ENV
+            echo "SUM_LINES=$SUM_LINES" >> $GITHUB_ENV
           fi
+
+      - name: Generate report
+        run: |
+          mkdir -p reports
+          NOW=$(date '+%Y-%m-%d %H:%M:%S')
+          cat > reports/deps_update_report.md << 'EOF'
+  # 📦 گزارش به‌روزرسانی وابستگی‌ها
+  
+  **تاریخ اجرا:** REPLACE_DATE
+  
+  ## 🛠️ GitHub Actions
+  REPLACE_ACTIONS
+  
+  ## 🐹 Go modules
+  REPLACE_GO
+  
+  ---
+  ✅ این گزارش به صورت خودکار تولید شده است.
+  EOF
+          
+          # جایگزینی مقادیر
+          ACTIONS_CONTENT="تغییری یافت نشد."
+          if [ -n "${{ env.UPDATED_ACTIONS }}" ]; then
+            ACTIONS_CONTENT="${{ env.UPDATED_ACTIONS }}"
+          fi
+          
+          GO_CONTENT="تغییری یافت نشد."
+          if [ "${{ steps.go.outputs.changed }}" == "true" ]; then
+            GO_CONTENT="- تغییرات در go.mod: **${{ env.MOD_LINES }}** خط\n- تغییرات در go.sum: **${{ env.SUM_LINES }}** خط"
+          fi
+          
+          sed -i "s|REPLACE_DATE|$NOW|g" reports/deps_update_report.md
+          sed -i "s|REPLACE_ACTIONS|$ACTIONS_CONTENT|g" reports/deps_update_report.md
+          sed -i "s|REPLACE_GO|$GO_CONTENT|g" reports/deps_update_report.md
 
       - name: Commit and push all changes
         if: >-
@@ -82,11 +123,8 @@ jobs:
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          git add go.mod go.sum 2>/dev/null || true
-          git add .github/workflows
-          git add .github/cmd
-          git add .github/internal
-          git diff --staged --quiet || git commit -m "Update dependencies $(date '+%Y-%m-%d')"
+          git add go.mod go.sum .github/workflows reports/ 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore(deps): update dependencies and generate report $(date '+%Y-%m-%d')"
           git push origin main
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
