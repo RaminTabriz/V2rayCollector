@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  workflows: write
 
 jobs:
   update-all:
@@ -14,8 +15,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # ------------------- به‌روزرسانی GitHub Actions -------------------
       - name: Find and update all actions
         id: actions
         env:
@@ -47,7 +49,6 @@ jobs:
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
-      # ------------------- به‌روزرسانی Go dependencies -------------------
       - name: Setup Go
         uses: actions/setup-go@v5
         if: hashFiles('go.mod') != ''
@@ -79,7 +80,6 @@ jobs:
           EOF
           fi
 
-      # ------------------- به‌روزرسانی npm dependencies (اختیاری) -------------------
       - name: Setup Node.js
         uses: actions/setup-node@v4
         if: hashFiles('package.json') != ''
@@ -100,7 +100,6 @@ jobs:
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
-      # ------------------- مرحله commit و push در صورت وجود تغییر -------------------
       - name: Commit and push all changes
         if: >-
           (steps.actions.outputs.changed == 'true') ||
@@ -109,7 +108,6 @@ jobs:
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          # اضافه کردن فایل‌هایی که وجود دارند
           git add .github/workflows go.mod go.sum 2>/dev/null || true
           [ -f package.json ] && git add package.json
           [ -f package-lock.json ] && git add package-lock.json
