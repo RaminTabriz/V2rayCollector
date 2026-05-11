@@ -78,5 +78,7 @@ jobs:
           git config user.name "GitHub Actions"
           git add .github/workflows go.mod go.sum 2>/dev/null || true
           git diff --staged --quiet || git commit -m "Update dependencies $(date '+%Y-%m-%d')"
-          git pull --rebase --autostash origin main || true
-          git push origin main
+          git push origin HEAD:refs/heads/dependabot-update
+          gh pr create --title "Update dependencies $(date '+%Y-%m-%d')" --body "Automated dependency update"
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
