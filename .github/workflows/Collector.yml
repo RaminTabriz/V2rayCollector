@@ -24,7 +24,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '>=1.21.3'
+          go-version: '>=1.90'
 
       - name: Display Go version
         run: go version
@@ -35,19 +35,96 @@ jobs:
       - name: Tidy dependencies
         run: go mod tidy
 
-      - name: Create reports directory
-        run: mkdir -p reports
+      - name: Create required directories
+        run: |
+          mkdir -p reports
+          mkdir -p all_configs
+          mkdir -p daily_archive
+          mkdir -p telegram
+          mkdir -p subscription
 
-      - name: Run collector (new modular version)
+      - name: Prepare combined input file (URLs only)
+        run: |
+          > combined.txt
+          if command -v jq &> /dev/null && [ -f Sources.json ]; then
+            jq -r '.[]' Sources.json >> combined.txt 2>/dev/null || true
+          elif [ -f Sources.json ]; then
+            grep -oE 'https?://[^"[:space:]]+' Sources.json >> combined.txt 2>/dev/null || true
+          fi
+          if [ -f channels.csv ]; then
+            grep -oE 'https?://[^,[:space:]]+' channels.csv >> combined.txt 2>/dev/null || true
+          fi
+          for f in valid_subscription_links.txt new_from_scan.txt; do
+            if [ -f "$f" ]; then
+              cat "$f" >> combined.txt 2>/dev/null || true
+            fi
+          done
+          sort -u combined.txt -o combined.txt
+          echo "Total URLs in combined.txt: $(wc -l < combined.txt)"
+
+      - name: Run collector
+        id: collector
         run: |
           export DEBUG=true
-          go run ./cmd/collector -sort -clash -fork-scan 2>&1 | tee collector_full.log
-          echo "===== FIRST 200 LINES ====="
+          timeout --kill-after=30s 900s go run ./cmd/collector \
+            -i combined.txt \
+            -o all_configs \
+            -c 50 \
+            -validate=true \
+            -dedup=true \
+            -filter=true \
+            -format=all \
+            -archive=true \
+            2>&1 | tee collector_full.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "EXIT_CODE=$EXIT_CODE" >> $GITHUB_OUTPUT
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "Collector failed with exit code: $EXIT_CODE"
+            tail -n 50 collector_full.log
+            exit $EXIT_CODE
+          fi
           head -n 200 collector_full.log
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate statistics report
+        run: |
+          cat > reports/collector_stats.md << EOF
+          ## 📊 Collector Statistics
+          **Run Date:** $(date '+%Y-%m-%d %H:%M:%S')
+          ### Output Files:
+          EOF
+          if [ -d "all_configs" ]; then
+            for f in all_configs/*.txt; do
+              if [ -f "$f" ]; then
+                echo "- $(basename "$f"): **$(wc -l < "$f")** configs" >> reports/collector_stats.md
+              fi
+            done
+          fi
+          echo "" >> reports/collector_stats.md
+          echo "### Protocol Distribution:" >> reports/collector_stats.md
+          total_vmess=0
+          total_vless=0
+          total_trojan=0
+          total_ss=0
+          total_hysteria=0
+          for f in all_configs/*.txt; do
+            if [ -f "$f" ]; then
+              total_vmess=$((total_vmess + $(grep -c 'vmess://' "$f" 2>/dev/null || echo 0)))
+              total_vless=$((total_vless + $(grep -c 'vless://' "$f" 2>/dev/null || echo 0)))
+              total_trojan=$((total_trojan + $(grep -c 'trojan://' "$f" 2>/dev/null || echo 0)))
+              total_ss=$((total_ss + $(grep -c 'ss://' "$f" 2>/dev/null || echo 0)))
+              total_hysteria=$((total_hysteria + $(grep -c 'hysteria2://' "$f" 2>/dev/null || echo 0)))
+            fi
+          done
+          echo "- VMess: **$total_vmess**" >> reports/collector_stats.md
+          echo "- VLESS: **$total_vless**" >> reports/collector_stats.md
+          echo "- Trojan: **$total_trojan**" >> reports/collector_stats.md
+          echo "- Shadowsocks: **$total_ss**" >> reports/collector_stats.md
+          echo "- Hysteria2: **$total_hysteria**" >> reports/collector_stats.md
+          cat reports/collector_stats.md
 
       - name: Add statistics to job summary
         run: |
@@ -57,16 +134,33 @@ jobs:
           else
             echo "No stats file yet" >> $GITHUB_STEP_SUMMARY
           fi
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "## 📄 Log excerpt" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           head -n 150 collector_full.log 2>/dev/null || echo "Log not found" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-      - name: Commit changes
+      - name: Upload artifacts (logs & reports)
+        uses: actions/upload-artifact@v4
+        with:
+          name: collector-run-logs
+          path: |
+            collector_full.log
+            reports/
+            all_configs/*.txt
+          retention-days: 7
+
+      - name: Commit and push changes
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          git add --all
-          git diff --staged --quiet || git commit -m "🤖 Auto collect $(date '+%Y-%m-%d %H:%M:%S')"
-          git pull --rebase --autostash origin main
-          git push origin main
+          git add all_configs/ telegram/ subscription/ daily_archive/
+          git add reports/*.md
+          git add Sources.json channels.csv valid_subscription_links.txt
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "🤖 Auto collect $(date '+%Y-%m-%d %H:%M:%S')"
+            git pull --rebase --autostash origin main
+            git push origin main
+          fi
