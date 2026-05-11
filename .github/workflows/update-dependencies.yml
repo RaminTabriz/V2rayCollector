@@ -22,7 +22,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          UPDATED_ACTIONS=""
+          # فایل موقت برای ذخیره لیست actionهای به‌روز شده
+          > /tmp/updated_actions.txt
+          
           find .github/workflows -name "*.yml" -o -name "*.yaml" | \
             xargs grep -ohE 'uses: [a-zA-Z0-9_/-]+@[v0-9a-zA-Z.]+' 2>/dev/null | \
             sed 's/uses: //' | sort -u > /tmp/actions.txt
@@ -39,15 +41,17 @@ jobs:
                 echo "Updating $action_name: $current_version -> $latest"
                 find .github/workflows -name "*.yml" -o -name "*.yaml" | \
                   xargs sed -i "s|\($action_name@\)[^[:space:]]*|\1$latest|g"
-                UPDATED_ACTIONS="${UPDATED_ACTIONS}\n- $action_name: $current_version → $latest"
+                # نوشتن در فایل موقت (با دو فاصله در ابتدا برای جلوگیری از خطای YAML)
+                echo "  - $action_name: $current_version → $latest" >> /tmp/updated_actions.txt
               fi
             fi
           done < /tmp/actions.txt
           
-          # ذخیره لیست به‌روزرسانی‌ها برای گزارش
-          if [ -n "$UPDATED_ACTIONS" ]; then
+          # خواندن محتویات فایل موقت در یک متغیر محیطی (اگر خالی نباشد)
+          if [ -s /tmp/updated_actions.txt ]; then
+            UPDATED_ACTIONS=$(cat /tmp/updated_actions.txt)
             echo "UPDATED_ACTIONS<<EOF" >> $GITHUB_ENV
-            echo -e "$UPDATED_ACTIONS" >> $GITHUB_ENV
+            echo "$UPDATED_ACTIONS" >> $GITHUB_ENV
             echo "EOF" >> $GITHUB_ENV
           fi
           
@@ -74,50 +78,46 @@ jobs:
           
           if git diff --quiet go.mod go.mod.bak && git diff --quiet go.sum go.sum.bak; then
             echo "changed=false" >> $GITHUB_OUTPUT
+            echo "NO_GO_CHANGES=1" >> $GITHUB_ENV
           else
             echo "changed=true" >> $GITHUB_OUTPUT
             MOD_LINES=$(git diff go.mod.bak go.mod 2>/dev/null | wc -l)
             SUM_LINES=$(git diff go.sum.bak go.sum 2>/dev/null | wc -l)
             echo "MOD_LINES=$MOD_LINES" >> $GITHUB_ENV
             echo "SUM_LINES=$SUM_LINES" >> $GITHUB_ENV
+            echo "NO_GO_CHANGES=0" >> $GITHUB_ENV
           fi
 
-      - name: Generate report (always)
+      - name: Generate report (safe)
         run: |
           mkdir -p reports
           NOW=$(date '+%Y-%m-%d %H:%M:%S')
           
-          cat > reports/deps_update_report.md << 'EOF'
-# 📦 گزارش به‌روزرسانی وابستگی‌ها
-
-**تاریخ اجرا:** REPLACE_DATE
-
-## 🛠️ GitHub Actions
-REPLACE_ACTIONS
-
-## 🐹 Go modules
-REPLACE_GO
-
----
-✅ این گزارش به صورت خودکار تولید شده است.
-EOF
-          # جایگزینی تاریخ
-          sed -i "s|REPLACE_DATE|$NOW|g" reports/deps_update_report.md
+          echo "# 📦 گزارش به‌روزرسانی وابستگی‌ها" > reports/deps_update_report.md
+          echo "" >> reports/deps_update_report.md
+          echo "**تاریخ اجرا:** $NOW" >> reports/deps_update_report.md
+          echo "" >> reports/deps_update_report.md
           
-          # بخش Actions
+          echo "## 🛠️ GitHub Actions" >> reports/deps_update_report.md
           if [ -n "${{ env.UPDATED_ACTIONS }}" ]; then
-            sed -i "s|REPLACE_ACTIONS|${{ env.UPDATED_ACTIONS }}|g" reports/deps_update_report.md
+            echo "${{ env.UPDATED_ACTIONS }}" >> reports/deps_update_report.md
           else
-            sed -i "s|REPLACE_ACTIONS|تغییری یافت نشد.|g" reports/deps_update_report.md
+            echo "تغییری یافت نشد." >> reports/deps_update_report.md
           fi
+          echo "" >> reports/deps_update_report.md
           
-          # بخش Go modules
-          if [ "${{ steps.go.outputs.changed }}" == "true" ]; then
-            GO_MSG="- تغییرات در go.mod: **${{ env.MOD_LINES }}** خط\n- تغییرات در go.sum: **${{ env.SUM_LINES }}** خط"
-            sed -i "s|REPLACE_GO|$GO_MSG|g" reports/deps_update_report.md
+          echo "## 🐹 Go modules" >> reports/deps_update_report.md
+          if [ "${{ env.NO_GO_CHANGES }}" == "1" ]; then
+            echo "تغییری یافت نشد." >> reports/deps_update_report.md
           else
-            sed -i "s|REPLACE_GO|تغییری یافت نشد.|g" reports/deps_update_report.md
+            echo "- تغییرات در go.mod: **${{ env.MOD_LINES }}** خط" >> reports/deps_update_report.md
+            echo "- تغییرات در go.sum: **${{ env.SUM_LINES }}** خط" >> reports/deps_update_report.md
           fi
+          echo "" >> reports/deps_update_report.md
+          echo "---" >> reports/deps_update_report.md
+          echo "✅ این گزارش به صورت خودکار تولید شده است." >> reports/deps_update_report.md
+          
+          cat reports/deps_update_report.md >> $GITHUB_STEP_SUMMARY
 
       - name: Commit and push all changes (including report)
         run: |
