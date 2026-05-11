@@ -104,11 +104,30 @@ jobs:
           (steps.go.outputs.changed == 'true') ||
           (steps.npm.outputs.changed == 'true')
         run: |
+          # دیباگ: بررسی وجود PAT_TOKEN
+          if [ -n "${{ secrets.PAT_TOKEN }}" ]; then
+            echo "PAT_TOKEN is set (first 10 chars: ${PAT_TOKEN:0:10})"
+          else
+            echo "PAT_TOKEN is NOT set! Push will fail."
+            exit 1
+          fi
+          
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
           git add .github/workflows go.mod go.sum 2>/dev/null || true
           [ -f package.json ] && git add package.json
           [ -f package-lock.json ] && git add package-lock.json
           [ -d reports ] && git add reports
-          git diff --staged --quiet || git commit -m "chore(deps): update all dependencies [skip ci]"
-          git push "https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:main
+          
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          
+          git commit -m "chore(deps): update all dependencies [skip ci]"
+          
+          # تنظیم remote URL با PAT_TOKEN
+          git remote set-url origin "https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git"
+          git push origin HEAD:main
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
