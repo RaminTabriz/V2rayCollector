@@ -22,7 +22,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          # لیست actionهای به‌روز شده
           UPDATED_ACTIONS=""
           find .github/workflows -name "*.yml" -o -name "*.yaml" | \
             xargs grep -ohE 'uses: [a-zA-Z0-9_/-]+@[v0-9a-zA-Z.]+' 2>/dev/null | \
@@ -45,7 +44,6 @@ jobs:
             fi
           done < /tmp/actions.txt
           
-          # ذخیره لیست به‌روزرسانی‌ها برای مرحله گزارش
           echo "UPDATED_ACTIONS<<EOF" >> $GITHUB_ENV
           echo -e "$UPDATED_ACTIONS" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
@@ -75,7 +73,6 @@ jobs:
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "changed=true" >> $GITHUB_OUTPUT
-            # ذخیره آمار تغییرات برای گزارش
             MOD_LINES=$(git diff go.mod.bak go.mod 2>/dev/null | wc -l)
             SUM_LINES=$(git diff go.sum.bak go.sum 2>/dev/null | wc -l)
             echo "MOD_LINES=$MOD_LINES" >> $GITHUB_ENV
@@ -86,44 +83,40 @@ jobs:
         run: |
           mkdir -p reports
           NOW=$(date '+%Y-%m-%d %H:%M:%S')
-          cat > reports/deps_update_report.md << 'EOF'
-  # 📦 گزارش به‌روزرسانی وابستگی‌ها
-  
-  **تاریخ اجرا:** REPLACE_DATE
-  
-  ## 🛠️ GitHub Actions
-  REPLACE_ACTIONS
-  
-  ## 🐹 Go modules
-  REPLACE_GO
-  
-  ---
-  ✅ این گزارش به صورت خودکار تولید شده است.
-  EOF
           
-          # جایگزینی مقادیر
-          ACTIONS_CONTENT="تغییری یافت نشد."
+          # عنوان گزارش
+          echo "# 📦 گزارش به‌روزرسانی وابستگی‌ها" > reports/deps_update_report.md
+          echo "" >> reports/deps_update_report.md
+          echo "**تاریخ اجرا:** $NOW" >> reports/deps_update_report.md
+          echo "" >> reports/deps_update_report.md
+          
+          # بخش GitHub Actions
+          echo "## 🛠️ GitHub Actions" >> reports/deps_update_report.md
           if [ -n "${{ env.UPDATED_ACTIONS }}" ]; then
-            ACTIONS_CONTENT="${{ env.UPDATED_ACTIONS }}"
+            echo "${{ env.UPDATED_ACTIONS }}" >> reports/deps_update_report.md
+          else
+            echo "تغییری یافت نشد." >> reports/deps_update_report.md
           fi
+          echo "" >> reports/deps_update_report.md
           
-          GO_CONTENT="تغییری یافت نشد."
+          # بخش Go modules
+          echo "## 🐹 Go modules" >> reports/deps_update_report.md
           if [ "${{ steps.go.outputs.changed }}" == "true" ]; then
-            GO_CONTENT="- تغییرات در go.mod: **${{ env.MOD_LINES }}** خط\n- تغییرات در go.sum: **${{ env.SUM_LINES }}** خط"
+            echo "- تغییرات در go.mod: **${{ env.MOD_LINES }}** خط" >> reports/deps_update_report.md
+            echo "- تغییرات در go.sum: **${{ env.SUM_LINES }}** خط" >> reports/deps_update_report.md
+          else
+            echo "تغییری یافت نشد." >> reports/deps_update_report.md
           fi
-          
-          sed -i "s|REPLACE_DATE|$NOW|g" reports/deps_update_report.md
-          sed -i "s|REPLACE_ACTIONS|$ACTIONS_CONTENT|g" reports/deps_update_report.md
-          sed -i "s|REPLACE_GO|$GO_CONTENT|g" reports/deps_update_report.md
+          echo "" >> reports/deps_update_report.md
+          echo "---" >> reports/deps_update_report.md
+          echo "✅ این گزارش به صورت خودکار تولید شده است." >> reports/deps_update_report.md
 
       - name: Commit and push all changes
-        if: >-
-          (steps.actions.outputs.changed == 'true') ||
-          (steps.go.outputs.changed == 'true')
+        if: steps.actions.outputs.changed == 'true' || steps.go.outputs.changed == 'true'
         run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          git add go.mod go.sum .github/workflows reports/ 2>/dev/null || true
+          git add go.mod go.sum .github/workflows reports/
           git diff --staged --quiet || git commit -m "chore(deps): update dependencies and generate report $(date '+%Y-%m-%d')"
           git push origin main
         env:
