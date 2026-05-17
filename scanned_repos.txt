@@ -1410,3 +1410,6 @@ https://raw.githubusercontent.com/youfoundamin/V2rayCollector/main/trojan_iran.t
 https://raw.githubusercontent.com/youfoundamin/V2rayCollector/main/vless_iran.txt/https:
 https://raw.githubusercontent.com/youfoundamin/V2rayCollector/main/vmess_iran.txt/https:
 https://raw.githubusercontent.com/zaharovk819/test/main/1.txt/https:
+https://raw.githubusercontent.com/wang1680/v2ray-configs/main/Countries/Ir.txt/https:
+https://raw.githubusercontent.com/wang1680/v2ray-configs/main/Countries/Puerto_Rico.txt/https:
+https://raw.githubusercontent.com/wang1680/v2ray-configs/main/Countries/Saudi_Arabia.txt/https:
