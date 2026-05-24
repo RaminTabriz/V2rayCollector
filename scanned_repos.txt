@@ -1413,3 +1413,4 @@ https://raw.githubusercontent.com/zaharovk819/test/main/1.txt/https:
 https://raw.githubusercontent.com/wang1680/v2ray-configs/main/Countries/Ir.txt/https:
 https://raw.githubusercontent.com/wang1680/v2ray-configs/main/Countries/Puerto_Rico.txt/https:
 https://raw.githubusercontent.com/wang1680/v2ray-configs/main/Countries/Saudi_Arabia.txt/https:
+https://raw.githubusercontent.com/wang1680/v2ray-configs/main/Countries/Mauritius.txt/https:
