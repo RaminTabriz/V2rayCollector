@@ -1414,3 +1414,4 @@ https://raw.githubusercontent.com/wang1680/v2ray-configs/main/Countries/Ir.txt/h
 https://raw.githubusercontent.com/wang1680/v2ray-configs/main/Countries/Puerto_Rico.txt/https:
 https://raw.githubusercontent.com/wang1680/v2ray-configs/main/Countries/Saudi_Arabia.txt/https:
 https://raw.githubusercontent.com/wang1680/v2ray-configs/main/Countries/Mauritius.txt/https:
+https://raw.githubusercontent.com/longlon/v2ray-config/main/Sub28.txt/https:
